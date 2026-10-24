@@ -1,0 +1,11 @@
+---
+description: Test the analysis with fixtures and report real results
+alwaysApply: true
+---
+
+# Testing
+
+- Pytest must pass without a live Oracle database and without an API key.
+- Mock Oracle metadata and model responses. Do not hide failing tests.
+- Regression scenarios belong in `tests/test_regression.py`.
+- A positive deployment recommendation in a test must come from the policy, not from a hardcoded page.

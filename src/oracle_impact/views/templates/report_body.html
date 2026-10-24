@@ -1,0 +1,330 @@
+{% macro origin_badge(origin) -%}
+  {%- if origin == 'investigator' -%}
+  <span class="origin origin-ai">AI investigator</span>
+  {%- else -%}
+  <span class="origin origin-deterministic">Deterministic</span>
+  {%- endif -%}
+{%- endmacro %}
+{% set counts = report.statistics.finding_counts %}
+{% set issues = issue_list(report) %}
+{% set severity_total = (counts.get('critical', 0) + counts.get('high', 0) + counts.get('medium', 0) + counts.get('low', 0) + counts.get('informational', 0)) or 1 %}
+<article class="report rec-{{ report.recommendation.value }}">
+  <header class="report-hero">
+    <div class="hero-copy">
+      <p class="eyebrow">Test proposed version compared with Production baseline</p>
+      <h1>Oracle package impact analysis report</h1>
+      <p class="hero-packages">{{ report.packages | join("  ·  ") }}</p>
+    </div>
+    <dl class="hero-meta">
+      <div><dt>Run</dt><dd>{{ report.run_id }}</dd></div>
+      <div><dt>Created</dt><dd>{{ report.created_at }}</dd></div>
+      <div><dt>Source</dt><dd>{{ report.test_environment.label }} · {{ report.test_environment.database_id }}</dd></div>
+      <div><dt>Baseline</dt><dd>{{ report.production_environment.label }} · {{ report.production_environment.database_id }}</dd></div>
+      <div class="meta-wide"><dt>Analyzer</dt><dd>{{ report.analyzer }}</dd></div>
+    </dl>
+    <p class="verdict verdict-{{ report.recommendation.value }}">{{ report.recommendation_label }}</p>
+  </header>
+
+  <section class="origin-legend" aria-label="Who produced each part">
+    <article>
+      <span class="origin origin-deterministic">Deterministic</span>
+      <p>Source comparison, dependencies, signatures, transaction and data checks, and the deployment recommendation. These are computed in Python and do not come from the model.</p>
+    </article>
+    <article class="origin-legend-ai">
+      <span class="origin origin-ai">AI investigator</span>
+      <p>
+        {% if report.ai_used %}
+        The investigator reviewed the change set{% if report.model_name %} with {{ report.model_name }}{% endif %}. Only the purple explanations are model output. They are not proof and cannot change the recommendation.
+        {% else %}
+        The investigator did not run for this report. Nothing below is model output.
+        {% endif %}
+      </p>
+    </article>
+  </section>
+
+  {% if report.test_environment.fixture %}
+  <p class="banner">Fixture mode is on. Counts and findings were computed from the bundled catalog, not from a live Oracle database.</p>
+  {% endif %}
+
+  <section class="kpi-row" aria-label="Summary">
+    <article class="kpi kpi-rose">
+      <p class="stat-label">Lines changed</p>
+      <p class="stat-value">{{ report.statistics.lines_changed }}</p>
+      <p class="stat-note">{{ report.statistics.lines_added }} added, {{ report.statistics.lines_removed }} removed</p>
+    </article>
+    <article class="kpi kpi-blue">
+      <p class="stat-label">Dependencies</p>
+      <p class="stat-value">{{ report.statistics.dependency_count }}</p>
+      <p class="stat-note">Direct and limited transitive edges</p>
+    </article>
+    <article class="kpi kpi-amber">
+      <p class="stat-label">Potential impacts</p>
+      <p class="stat-value">{{ report.statistics.potential_impacts }}</p>
+      <p class="stat-note">{{ report.statistics.high_findings }} high or critical · {{ report.statistics.medium_findings }} medium</p>
+    </article>
+    <article class="kpi kpi-{{ report.recommendation.value }}">
+      <p class="stat-label">Deployment assessment</p>
+      <p class="stat-value kpi-title">{{ report.recommendation_label }}</p>
+      <p class="stat-note">Conditional on testing and approval</p>
+    </article>
+  </section>
+
+  <section class="panel severity-panel">
+    <div>
+      <h2>Findings by severity</h2>
+      <p class="hint">Counts come from the deterministic findings in this run. AI notes are not counted. Confidence stays qualitative and is not shown as a percentage.</p>
+    </div>
+    <svg class="severity-chart" viewBox="0 0 560 148" role="img">
+      <title>Finding counts by severity</title>
+      {% for name, color, y in [
+        ('critical', '#9f1239', 8),
+        ('high', '#c2410c', 36),
+        ('medium', '#b45309', 64),
+        ('low', '#1d4ed8', 92),
+        ('informational', '#0f766e', 120)
+      ] %}
+      {% set count = counts.get(name, 0) %}
+      {% set width = ((count / severity_total) * 360) | round(0, 'floor') | int %}
+      <text x="0" y="{{ y + 12 }}" fill="#526173" font-size="12">{{ name }}</text>
+      <rect x="118" y="{{ y }}" width="360" height="16" rx="8" fill="#e7eef6"/>
+      <rect x="118" y="{{ y }}" width="{{ width if width > 0 else 0 }}" height="16" rx="8" fill="{{ color }}"/>
+      <text x="488" y="{{ y + 12 }}" fill="#1c2b39" font-size="12">{{ count }}</text>
+      {% endfor %}
+    </svg>
+  </section>
+
+  <nav class="report-nav" aria-label="Report sections">
+    <a href="#comparison">Comparison</a>
+    <a href="#changes">Issues</a>
+    <a href="#dependencies">Dependencies</a>
+    <a href="#ai">AI review</a>
+    <a href="#risk">Recommendation</a>
+    <a href="#limitations">Limitations</a>
+  </nav>
+
+  <p class="exports">
+    <a href="/analyses/{{ report.run_id }}/export?format=html">Download HTML</a>
+    <a href="/analyses/{{ report.run_id }}/export?format=pdf">Download PDF</a>
+    <a href="/analyses/{{ report.run_id }}/export?format=json">Download JSON</a>
+  </p>
+
+  <section class="panel" id="comparison">
+    <h2><span class="section-index">1</span> Source comparison</h2>
+    <p class="hint">Test is on the left. Production is on the right. Line numbers refer to the captured snapshot.</p>
+    {% for diff in report.diffs %}
+    <div class="diff" data-diff>
+      <div class="diff-title">
+        <h3>{{ diff.owner }}.{{ diff.name }} · {{ diff.object_type }}</h3>
+        <button type="button" data-next-change>Next change</button>
+      </div>
+      <p class="hint">{{ diff.added }} added, {{ diff.removed }} removed{% if diff.formatting_only %}. Formatting only.{% endif %}{% if diff.unchanged %}. Unchanged.{% endif %}</p>
+      <div class="diff-grid">
+        <div class="diff-pane">
+          <h4>Test</h4>
+          {% for row in diff.rows %}
+          <div class="diff-line kind-{{ row.test_kind }} {{ 'is-changed' if row.test_kind != 'context' else '' }}">
+            <span>{{ row.test_line_no or "" }}</span>
+            <code>{{ row.test_text }}</code>
+          </div>
+          {% endfor %}
+        </div>
+        <div class="diff-pane">
+          <h4>Production</h4>
+          {% for row in diff.rows %}
+          <div class="diff-line kind-{{ row.prod_kind }} {{ 'is-changed' if row.prod_kind == 'removed' else '' }}">
+            <span>{{ row.prod_line_no or "" }}</span>
+            <code>{{ row.prod_text }}</code>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </section>
+
+  <section class="panel" id="changes">
+      <h2><span class="section-index">2</span> Issues</h2>
+      <p class="hint">One row per issue, most severe first. Severity comes from the Python checks. Purple text is the AI's explanation of that issue. It does not change the severity or the recommendation.</p>
+      {% if issues.groups | length > 1 %}
+      <div class="issue-filters" data-issue-filters aria-label="Filter issues">
+        <button type="button" data-filter="all" aria-pressed="true">All <span>{{ issues.rows | length }}</span></button>
+        {% for group in issues.groups %}
+        <button type="button" data-filter="{{ group.key }}" aria-pressed="false">{{ group.label }} <span>{{ group.count }}</span></button>
+        {% endfor %}
+      </div>
+      {% endif %}
+      <ol class="issue-list">
+        {% for row in issues.rows %}
+        <li class="issue sev-{{ row.level }}" id="issue-{{ row.finding.id }}" data-group="{{ row.group }}">
+          <span class="pill pill-{{ row.level }}">{{ row.level }}</span>
+          <div class="issue-body">
+            <p class="issue-title">{{ row.headline }}</p>
+            <p class="issue-meta">
+              {{ origin_badge('deterministic') }}
+              <span>{{ row.group_label }}</span>
+              {% if row.where %}<span>{{ row.where }}</span>{% endif %}
+              <a href="/analyses/{{ report.run_id }}/findings/{{ row.finding.id }}">{{ row.finding.id }}</a>
+            </p>
+            {% if row.explanation %}
+            <div class="issue-ai">
+              <p class="issue-ai-label">AI explanation · <a href="/analyses/{{ report.run_id }}/findings/{{ row.note.id }}">{{ row.note.id }}</a></p>
+              <p>{{ row.explanation }}</p>
+            </div>
+            {% endif %}
+            {% if row.todo %}
+            <details class="issue-more"{% if print_mode %} open{% endif %}>
+              <summary>Test to run{% if row.todo_from_ai %} (suggested by AI){% endif %}</summary>
+              <p>{{ row.todo }}</p>
+              {% if row.finding.attributes.get('test_snippets') %}
+              <p><a href="/analyses/{{ report.run_id }}/findings/{{ row.finding.id }}">Open the scripts to paste into Oracle</a></p>
+              {% endif %}
+            </details>
+            {% endif %}
+          </div>
+        </li>
+        {% else %}
+        <li class="hint">No issues were found.</li>
+        {% endfor %}
+      </ol>
+  </section>
+  <section class="panel" id="dependencies">
+      <h2><span class="section-index">3</span> Dependencies</h2>
+      <div class="diagram">{{ report.diagram_svg | safe }}</div>
+      <div class="table-scroll">
+      <table class="dep-table">
+        <thead><tr><th>Direction</th><th>Type</th><th>Object</th><th>Usage</th><th>Impact</th></tr></thead>
+        <tbody>
+          {% for row in report.dependencies %}
+          <tr>
+            <td>{{ row.direction }}</td>
+            <td>{{ row.object_type }}</td>
+            <td>{{ row.owner }}.{{ row.object_name }}</td>
+            <td>{{ row.usage }}</td>
+            <td><span class="impact-tag">{{ row.impact }}</span></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5">No dependency edges were returned.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+  </section>
+
+  <section class="panel ai-panel" id="ai">
+    <h2><span class="section-index">AI</span> AI review</h2>
+    {% if not report.ai_used %}
+    <p class="hint">The AI investigator did not run. Every issue in this report comes from the Python checks.</p>
+    {% else %}
+    {% set sources = ai_sources(report) %}
+    <p class="hint">The AI explains issues in plain words{% if report.model_name %} ({{ report.model_name }}){% endif %}. It cannot confirm an issue or change the recommendation. Its explanations appear in purple with each issue above.</p>
+    <div class="ai-stats">
+      <div><strong>{{ issues.serious_explained }} of {{ issues.serious }}</strong><span>serious issues explained</span></div>
+      <div><strong>{{ issues.blind_spots | length }}</strong><span>things it could not check</span></div>
+      <div><strong>{{ sources.objects }}</strong><span>database objects read</span></div>
+    </div>
+
+    {% if issues.unexplained %}
+    <div class="ai-block">
+      <h3>Not explained by the AI</h3>
+      <p class="hint">The AI was not asked about these, or did not answer. They still stand. Use the Python finding for each one.</p>
+      <ul class="reason-chips">
+        {% for item in issues.unexplained %}
+        <li><a href="#issue-{{ item.id }}"><span class="pill pill-{{ item.level }}">{{ item.level }}</span> {{ item.id }}</a></li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
+    {% if issues.blind_spots %}
+    <div class="ai-block">
+      <h3>What the AI could not check</h3>
+      <p class="hint">Check these by hand before you rely on the AI explanations.</p>
+      <ul class="blind-spots">
+        {% for spot in issues.blind_spots %}
+        <li>
+          <span>{{ spot.text }}</span>
+          <span class="spot-links">{% for id in spot.issues %}<a href="#issue-{{ id }}">{{ id }}</a>{% endfor %}</span>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
+    {% if issues.extra %}
+    <div class="ai-block">
+      <h3>Additional notes from the AI</h3>
+      <p class="hint">These do not match an issue above. They are possibilities, not confirmed findings.</p>
+      {% for finding in issues.extra %}
+      <a class="finding-card from-ai sev-{{ finding.severity.value }}" href="/analyses/{{ report.run_id }}/findings/{{ finding.id }}">
+        <span class="card-head">{{ origin_badge(finding.origin) }}
+        <strong>{{ finding.id }}</strong></span>
+        {% include "_ai_lines.html" %}
+      </a>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if sources.rows %}
+    <details class="ai-block ai-sources"{% if print_mode %} open{% endif %}>
+      <summary>What the AI read <span class="hint">{{ sources.objects }} objects · {{ sources.reads }} reads{% if sources.refused %} · {{ sources.refused }} not allowed{% endif %}</span></summary>
+      <div class="table-scroll">
+      <table class="source-table">
+        <thead><tr><th>Object</th><th>What it read</th><th>Database</th></tr></thead>
+        <tbody>
+          {% for row in sources.rows %}
+          <tr>
+            <td>{{ row.object }}</td>
+            <td>{{ row.what }}</td>
+            <td>
+              {% if row.test %}<span class="env-tag">Test</span>{% endif %}
+              {% if row.production %}<span class="env-tag">Production</span>{% endif %}
+              {% if row.refused %}<span class="env-tag is-refused">Not allowed</span>{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      {% if sources.refused %}<p class="hint">"Not allowed" means the object is outside the list the AI may read. The AI never runs SQL.</p>{% endif %}
+    </details>
+    {% endif %}
+    {% endif %}
+  </section>
+
+  <section class="panel decision" id="risk">
+    <h2><span class="section-index">4</span> Risk assessment and recommendation</h2>
+    <p>{{ origin_badge('deterministic') }}</p>
+    <p class="hint">This decision is computed from the Python checks. The AI cannot upgrade or approve it.</p>
+    <p class="decision-title">{{ report.recommendation_label }}</p>
+    <div class="decision-grid">
+      <div>
+        <h3>Because of</h3>
+        {% set reasons = plain_reasons(report) %}
+        {% set linked = reasons | selectattr('id') | list %}
+        {% if linked %}
+        <ul class="reason-chips">
+          {% for item in linked %}
+          {% set reason_finding = report.findings | selectattr('id', 'equalto', item.id) | first %}
+          {% set in_list = reason_finding and reason_finding.origin != 'investigator' and reason_finding.change_category != 'coverage' %}
+          <li><a href="{{ '#issue-' ~ item.id if in_list else '/analyses/' ~ report.run_id ~ '/findings/' ~ item.id }}">{% if reason_finding %}<span class="pill pill-{{ reason_finding.severity.value }}">{{ reason_finding.severity.value }}</span> {% endif %}{{ item.id }}</a></li>
+          {% endfor %}
+        </ul>
+        <p class="hint">Each item links to its row in the issue list above.</p>
+        {% endif %}
+        {% for item in reasons if not item.id %}<p>{{ item.text }}</p>{% endfor %}
+      </div>
+      <div>
+        <h3>Required actions</h3>
+        <ul>{% for action in report.required_actions %}<li>{{ action }}</li>{% endfor %}</ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel" id="limitations">
+    <h2><span class="section-index">5</span> Known limitations</h2>
+    <ul class="limit-list">
+      {% for item in report.limitations %}<li>{{ item }}</li>{% endfor %}
+      {% for finding in sections.coverage %}<li>{{ origin_badge(finding.origin) }} {{ finding.id }}: {{ finding.explanation }}</li>{% endfor %}
+    </ul>
+  </section>
+</article>

@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}{{ finding.id }}{% endblock %}
+{% block content %}
+{% set is_ai = finding.origin == 'investigator' %}
+{% set sev = severity_label(finding, report) %}
+{% set lines = review_lines(finding, report) %}
+{% set reviews = finding.attributes.get('review_of') %}
+{% set status_text = {
+  'confirmed': 'Confirmed by the source comparison',
+  'potential': 'Possible, not confirmed',
+  'unknown': 'Could not be checked'
+} %}
+<p class="eyebrow"><a href="/analyses/{{ report.run_id }}/report">Back to report</a></p>
+<article class="panel finding-page {{ 'ai-panel' if is_ai else '' }}">
+  <header class="finding-head">
+    <div class="finding-tags">
+      {% if is_ai %}
+      <span class="origin origin-ai">AI investigator</span>
+      {% else %}
+      <span class="origin origin-deterministic">Deterministic</span>
+      {% endif %}
+      <span class="pill pill-{{ sev.level }}">{{ sev.text }}</span>
+    </div>
+    <h1>{{ finding.id }}{% if reviews %} <span class="finding-sub">explains <a href="/analyses/{{ report.run_id }}/findings/{{ reviews }}">{{ reviews }}</a></span>{% endif %}</h1>
+    {% if is_ai %}
+    <p class="hint">Written by the AI model to explain a finding in plain words. It is not proof, and it does not change the deployment recommendation.</p>
+    {% else %}
+    <p class="hint">Found by the Python checks. The AI model did not write this.</p>
+    {% endif %}
+  </header>
+
+  <section class="finding-section">
+    {% include "_ai_lines.html" %}
+  </section>
+
+  <section class="finding-section">
+    <h2>{{ 'What the model looked at' if is_ai else 'Evidence' }}</h2>
+    <p>{{ finding.evidence }}</p>
+  </section>
+
+  {% if not is_ai and (finding.recommended_action != lines.todo or finding.proposed_tests | length > 1) %}
+  <section class="finding-section">
+    {% if finding.recommended_action != lines.todo %}
+    <h2>Recommended action</h2>
+    <p>{{ finding.recommended_action }}</p>
+    {% endif %}
+    {% if finding.proposed_tests | length > 1 %}
+    <h2>Tests to run</h2>
+    <ul>{% for test in finding.proposed_tests %}<li>{{ test }}</li>{% endfor %}</ul>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  <section class="finding-section">
+    <h2>Details</h2>
+    <dl class="meta">
+      <div><dt>Object</dt><dd>{{ finding.changed_object }} ({{ finding.object_type | lower }})</dd></div>
+      <div><dt>Type of change</dt><dd>{{ finding.change_category | replace('_', ' ') | capitalize | replace('sql', 'SQL') }}</dd></div>
+      <div><dt>Status</dt><dd>{{ status_text.get(finding.status.value, finding.status.value) }}</dd></div>
+      <div><dt>Confidence</dt><dd>{{ finding.confidence.value | capitalize }}</dd></div>
+      {% if finding.affected_object %}<div><dt>Affected object</dt><dd>{{ finding.affected_object }}</dd></div>{% endif %}
+      {% if finding.changed_lines_test %}<div><dt>Lines in Test</dt><dd>{{ finding.changed_lines_test | join(", ") }}</dd></div>{% endif %}
+      {% if finding.corresponding_lines_prod %}<div><dt>Lines in Production</dt><dd>{{ finding.corresponding_lines_prod | join(", ") }}</dd></div>{% endif %}
+      {% if finding.version_hash %}<div><dt>Version hash</dt><dd>{{ finding.version_hash }}</dd></div>{% endif %}
+      {% if finding.dependency_path %}<div class="meta-wide"><dt>Call path</dt><dd>{{ finding.dependency_path | join(" · ") }}</dd></div>{% endif %}
+    </dl>
+  </section>
+
+  {% if finding.attributes.get('test_snippets') %}
+  <section class="finding-section">
+    <h2>Test scripts to paste into Oracle</h2>
+    <ul class="hint snippet-rules">
+      <li>Run these in Test only. Test has the new package. Production still has the old one.</li>
+      <li>If this finding says an object is missing, the script should fail in Test. That is the error Production would show after the release.</li>
+      <li>This application never runs these scripts.</li>
+    </ul>
+    {% for snippet in finding.attributes.get('test_snippets') %}
+    <div class="sql-snippet">
+      <div class="sql-snippet-bar">
+        <strong>{{ snippet.title }}</strong>
+        <button type="button" data-copy>Copy</button>
+      </div>
+      <pre>{{ snippet.sql }}</pre>
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+</article>
+{% endblock %}

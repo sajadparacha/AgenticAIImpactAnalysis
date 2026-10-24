@@ -1,0 +1,13 @@
+---
+description: Read-only Oracle access and secret handling
+alwaysApply: true
+---
+
+# Security
+
+- Oracle access is read-only. Application SQL lives in the fixed query catalog and uses bind variables.
+- Never execute SQL or PL/SQL supplied by a model or by an end user.
+- Do not log credentials, DSNs, access tokens, or package source.
+- LLM egress stays disabled unless `OIA_LLM_EGRESS_ENABLED` is explicitly set for an approved endpoint.
+- Development sign-in is a local access token. It is not a substitute for enterprise SSO.
+- Keep `runs/` out of git. Run identifiers must not allow path traversal.

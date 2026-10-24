@@ -1,0 +1,26 @@
+{% set lines = review_lines(finding, report) %}
+{% if finding.origin == 'investigator' and not lines.change and not lines.todo %}
+<p class="hint">Same conclusion as {{ lines.reviews or "the deterministic finding" }}. This note does not add a separate change.</p>
+{% if lines.unchecked %}<p class="hint">Not checked: {{ lines.unchecked }}</p>{% endif %}
+{% else %}
+<dl class="ai-lines">
+  {% if lines.change %}
+  <div>
+    <dt>What changes</dt>
+    <dd>{{ lines.change }}</dd>
+  </div>
+  {% endif %}
+  {% if lines.todo %}
+  <div>
+    <dt>What to do</dt>
+    <dd>{{ lines.todo }}</dd>
+  </div>
+  {% endif %}
+  {% if lines.unchecked %}
+  <div class="is-aside">
+    <dt>Not checked</dt>
+    <dd>{{ lines.unchecked }}</dd>
+  </div>
+  {% endif %}
+</dl>
+{% endif %}

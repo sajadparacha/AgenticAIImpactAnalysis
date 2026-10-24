@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="login-body">
+  <main class="login-card">
+    <p class="eyebrow">Local access</p>
+    <h1>Oracle package impact analysis</h1>
+    <p class="lede">This development sign-in is a shared access token. It is not enterprise single sign-on.</p>
+    {% if error %}<p class="banner banner-error">{{ error }}</p>{% endif %}
+    <form method="post" action="/login">
+      <label for="access_token">Access token</label>
+      <input id="access_token" name="access_token" type="password" autocomplete="current-password" required>
+      <button type="submit">Continue</button>
+    </form>
+  </main>
+</body>
+</html>

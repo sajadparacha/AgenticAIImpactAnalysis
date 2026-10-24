@@ -1,0 +1,13 @@
+---
+description: Keep MVC boundaries and the hybrid analysis pipeline intact
+alwaysApply: true
+---
+
+# Architecture boundaries
+
+- Controllers validate HTTP input, start runs, and render templates. They do not contain SQL, prompts, or recommendation rules.
+- Domain models stay free of FastAPI and Jinja imports.
+- Deterministic snapshot, diff, signature, dependency, and impact checks always run. The investigator cannot replace them or upgrade a recommendation.
+- One investigator only. Do not add another agent framework, vector store, or graph database.
+- Confirmed findings require deterministic evidence. Investigator claims stay potential or unknown.
+- Do not hardcode report findings, recommendations, object names, or counts in templates.

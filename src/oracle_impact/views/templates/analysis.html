@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Analysis {{ run_id }}{% endblock %}
+{% block content %}
+<section class="page-intro">
+  <div>
+    <p class="eyebrow">Run {{ run_id }}</p>
+    <h1>Analysis status</h1>
+  </div>
+  <p class="badge badge-{{ status.status }}">{{ status.status }}</p>
+</section>
+
+{% set stage_labels = {
+  "queued": "Queued",
+  "snapshotting": "Source snapshot",
+  "comparing": "Code comparison",
+  "dependencies": "Dependencies",
+  "investigating": "AI investigation",
+  "validating": "Recommendation",
+  "completed": "Complete"
+} %}
+<ol class="stages" data-poll-status="/analyses/{{ run_id }}/status" data-current="{{ status.status }}" data-terminal="{{ 'yes' if status.status in ['completed', 'failed'] else 'no' }}">
+  {% for stage, label in stage_labels.items() %}
+  <li data-stage="{{ stage }}">{{ label }}</li>
+  {% endfor %}
+</ol>
+<section class="model-activity {% if status.status != 'investigating' and not status.activity %}hidden{% endif %}" data-model-activity>
+  <p data-model-thought>{% if status.activity %}{{ status.activity[-1].text }}{% else %}The investigator is deciding what to read.{% endif %}</p>
+  <ol data-model-actions>
+    {% for item in status.activity or [] if item.kind == 'action' %}
+    <li>{{ item.text }}</li>
+    {% endfor %}
+  </ol>
+  <p class="thinking-label {% if status.status != 'investigating' %}hidden{% endif %}" data-model-thinking>Thinking</p>
+</section>
+<div class="spinner-row {% if status.status in ['completed', 'failed', 'investigating'] %}hidden{% endif %}" data-spinner role="status" aria-label="Analysis in progress">
+  <span class="spinner" aria-hidden="true"></span>
+  <span>Analysis in progress</span>
+</div>
+<p class="hint" data-status-label>{{ status.detail or status.status }}</p>
+<div class="step-list" data-progress-steps>
+  {% for stage, label in stage_labels.items() %}
+    {% set step = (status.steps or {}).get(stage) %}
+    {% if step %}
+    <details class="step" data-step="{{ stage }}" {% if status.status == stage and status.status not in ["completed", "failed"] %}open{% endif %}>
+      <summary><span>{{ label }}</span>{{ step.summary }}</summary>
+      <ul>
+        {% for line in step.lines %}
+        <li>{{ line }}</li>
+        {% else %}
+        <li>No additional detail was recorded.</li>
+        {% endfor %}
+      </ul>
+    </details>
+    {% endif %}
+  {% endfor %}
+</div>
+{% if status.error %}<p class="banner banner-error" data-status-error>{{ status.error }}</p>{% endif %}
+
+{% if report %}
+<section class="stat-row">
+  <article class="stat">
+    <p class="stat-label">Lines changed</p>
+    <p class="stat-value">{{ report.statistics.lines_changed }}</p>
+    <p class="stat-note">{{ report.statistics.lines_added }} added, {{ report.statistics.lines_removed }} removed</p>
+  </article>
+  <article class="stat">
+    <p class="stat-label">Dependencies</p>
+    <p class="stat-value">{{ report.statistics.dependency_count }}</p>
+  </article>
+  <article class="stat">
+    <p class="stat-label">Findings</p>
+    <p class="stat-value">{{ report.findings | length }}</p>
+    <p class="stat-note">{{ report.statistics.high_findings }} high or critical, {{ report.statistics.medium_findings }} medium</p>
+  </article>
+  <article class="stat stat-{{ report.recommendation.value }}">
+    <p class="stat-label">Recommendation</p>
+    <p class="stat-value">{{ report.recommendation_label }}</p>
+  </article>
+</section>
+<p><a class="button" href="/analyses/{{ run_id }}/report">Open the full report</a></p>
+{% endif %}
+{% endblock %}
