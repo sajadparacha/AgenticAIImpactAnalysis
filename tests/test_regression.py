@@ -180,6 +180,27 @@ def test_added_overload_requires_investigation(tmp_path):
     _expect(tmp_path, test_catalog, prod_catalog, Recommendation.REQUIRES_INVESTIGATION, ("interface",), no_breaking=True)
 
 
+def test_new_overload_body_is_not_compared_with_the_original_overload(tmp_path):
+    prod = (
+        "PACKAGE BODY pkg_demo AS\n"
+        "  PROCEDURE run(p_id IN NUMBER) IS\n"
+        "  BEGIN\n"
+        "    UPDATE account SET status = 'A' WHERE id = p_id;\n"
+        "  END run;\n"
+        "END;\n"
+    )
+    test = prod.replace(
+        "END;\n",
+        "  PROCEDURE run(p_id IN VARCHAR2) IS\n  BEGIN\n    run(TO_NUMBER(p_id));\n  END run;\nEND;\n",
+    )
+    prod_args = [argument("RUN", "P_ID", 1, "NUMBER")]
+    test_args = [argument("RUN", "P_ID", 1, "NUMBER", overload="1"), argument("RUN", "P_ID", 1, "VARCHAR2", overload="2")]
+    test_catalog, prod_catalog = _pair(prod, test, prod_args, test_args)
+    report = run_catalogs(tmp_path, ["APP.PKG_DEMO"], test_catalog, prod_catalog)
+    assert report.recommendation == Recommendation.REQUIRES_INVESTIGATION
+    assert not [finding for finding in report.findings if finding.change_category in {"transaction", "data"}]
+
+
 def test_removed_routine_is_not_recommended(tmp_path):
     prod = "PACKAGE BODY pkg_demo AS PROCEDURE run(p_id IN NUMBER) IS BEGIN NULL; END; PROCEDURE close IS BEGIN NULL; END; END;\n"
     test = "PACKAGE BODY pkg_demo AS PROCEDURE run(p_id IN NUMBER) IS BEGIN NULL; END; END;\n"
@@ -501,6 +522,18 @@ def _only(report, category):
     found = [finding for finding in report.findings if finding.change_category == category]
     assert len(found) == 1, [(finding.change_category, finding.evidence) for finding in report.findings]
     return found[0]
+
+
+def test_unchanged_dml_after_a_changed_line_is_not_reported_as_modified(tmp_path):
+    prod = "PACKAGE BODY pkg_demo AS PROCEDURE run(p_id IN NUMBER) IS BEGIN\n  UPDATE account SET status = 'A' WHERE id = p_id;\nEND; END;\n"
+    test = (
+        "PACKAGE BODY pkg_demo AS PROCEDURE run(p_id IN NUMBER) IS BEGIN\n  IF p_id IS NOT NULL THEN\n"
+        "  UPDATE account SET status = 'A' WHERE id = p_id;\n  END IF;\nEND; END;\n"
+    )
+    test_catalog, prod_catalog = _pair(prod, test)
+    report = run_catalogs(tmp_path, ["APP.PKG_DEMO"], test_catalog, prod_catalog)
+    assert not [finding for finding in report.findings if finding.change_category == "data"]
+    assert any(finding.change_category == "business_logic" for finding in report.findings)
 
 
 def test_removed_error_code_holds_the_recommendation(tmp_path):

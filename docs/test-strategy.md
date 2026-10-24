@@ -9,7 +9,7 @@ Automated tests run with `pytest` and do not need Oracle or a model endpoint.
 | Diff and names | `tests/test_diff.py` | Line alignment, formatting-only normalization, identifier rejection |
 | Signatures | `tests/test_signatures.py` | Optional suffix versus mandatory parameter with an external caller |
 | Policy | `tests/test_recommendation.py` | Blocking and conditional outcomes |
-| Regression | `tests/test_regression.py` | 30 change scenarios and their expected recommendation class |
+| Regression | `tests/test_regression.py` | 32 change scenarios and their expected recommendation class |
 | Browser slice and investigator | `tests/test_http_and_agent.py` | Both fixture reports, PDF and JSON export, CSRF, citation downgrade, budgets |
 | Report presentation | `tests/test_report_view.py` | Count reconciliation, policy-derived drivers, "Not recorded" human decision, AI-only rows stay unrated, deep-link validation, diff context folding and line links, dependency linking, audit thought filtering, print export completeness, legacy anchors and export links |
 
@@ -17,7 +17,7 @@ Browser checks for the report page are manual: tab keyboard navigation, drawer f
 
 A regression scenario builds two fixture catalogs and runs `AnalysisService`. Expectations are recommendation class, finding category, evidence text, or the absence of a breaking flag. They do not assert a percentage.
 
-The 22 scenarios are:
+The 32 scenarios are:
 
 1. Mandatory parameter with an external caller
 2. Backward-compatible optional parameter
@@ -49,6 +49,8 @@ The 22 scenarios are:
 28. Grant present in Test but missing in Production, and the reverse
 29. Partial (`ALL_TAB_PRIVS`) and unreadable grants
 30. Live gateway falls back from `DBA_TAB_PRIVS` to `ALL_TAB_PRIVS`
+31. Unchanged DML after a changed line is not reported as modified
+32. A new overload's body is not compared with the original overload
 
 High-risk scenarios in this list are expected to finish as “not recommended” or “requires further investigation”. None of them finish as eligible for review.
 

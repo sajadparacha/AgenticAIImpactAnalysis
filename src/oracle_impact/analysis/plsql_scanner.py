@@ -35,6 +35,7 @@ _EXCEPTION_INIT = re.compile(
 _EXCEPTION_DECLARATION = re.compile(r"\b([A-Z][A-Z0-9_$#]*)\s+EXCEPTION\s*;", re.IGNORECASE)
 _AUTHID = re.compile(r"\bAUTHID\s+(CURRENT_USER|DEFINER)\b", re.IGNORECASE)
 _HEADER_END = re.compile(r"\b(IS|AS)\b", re.IGNORECASE)
+_STATEMENT_BOUNDARY = re.compile(r"\b(BEGIN|THEN|ELSE|LOOP|DECLARE|EXCEPTION|IS|AS)\s*$", re.IGNORECASE)
 _SKIP_TABLES = {"DUAL", "SELECT"}
 
 
@@ -104,7 +105,7 @@ def _operation(keyword: str) -> str:
 
 def _statement(lines: list[str], index: int) -> str:
     start = index
-    while start > 0 and ";" not in lines[start - 1]:
+    while start > 0 and ";" not in lines[start - 1] and not _STATEMENT_BOUNDARY.search(lines[start - 1]):
         start -= 1
         if index - start > 30:
             break

@@ -1,5 +1,7 @@
 """Turn snapshots, diffs, signatures, and metadata into evidence-backed findings."""
 
+import re
+
 from oracle_impact.analysis.grants import GrantChange
 from oracle_impact.analysis.hashing import finding_id
 from oracle_impact.analysis.normalize import normalize_plsql
@@ -295,9 +297,9 @@ def _body_findings(
         if row.prod_kind == "removed" and row.prod_line_no
     }
     body_changed = bool(changed_test_lines or changed_prod_lines)
-    prod_by_name = {routine.name: routine for routine in prod_scan.routines}
+    pairs = _pair_routines(test_scan, prod_scan)
     for routine in test_scan.routines:
-        prod_routine = prod_by_name.get(routine.name)
+        prod_routine = pairs.get(id(routine))
         if not body_changed and prod_routine is not None:
             continue
         findings.extend(
@@ -314,6 +316,36 @@ def _body_findings(
             )
         )
     return [item for item in findings if item is not None]
+
+
+def _pair_routines(test_scan: PackageScan, prod_scan: PackageScan) -> dict[int, RoutineScan]:
+    """Match each Test routine to its Production version. Overloads share a name, so an identical
+    header is matched first; a Test overload left without a counterpart is treated as new."""
+    remaining: dict[str, list[RoutineScan]] = {}
+    for routine in prod_scan.routines:
+        remaining.setdefault(routine.name, []).append(routine)
+    pairs: dict[int, RoutineScan] = {}
+    for routine in test_scan.routines:
+        header = _routine_header(test_scan, routine)
+        for candidate in remaining.get(routine.name, []):
+            if _routine_header(prod_scan, candidate) == header:
+                pairs[id(routine)] = candidate
+                remaining[routine.name].remove(candidate)
+                break
+    for routine in test_scan.routines:
+        if id(routine) not in pairs and remaining.get(routine.name):
+            pairs[id(routine)] = remaining[routine.name].pop(0)
+    return pairs
+
+
+def _routine_header(scan: PackageScan, routine: RoutineScan) -> str:
+    collected = []
+    for line in scan.masked_lines[routine.start_line - 1 : routine.start_line + 9]:
+        collected.append(line)
+        if re.search(r"\b(IS|AS)\b", line, re.IGNORECASE):
+            break
+    text = " ".join(" ".join(collected).split()).upper()
+    return re.split(r"\b(?:IS|AS)\b", text, maxsplit=1)[0].strip()
 
 
 def _routine_findings(
