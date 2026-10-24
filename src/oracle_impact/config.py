@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -37,6 +37,20 @@ class Settings(BaseSettings):
     prod_oracle_password: str = ""
     prod_oracle_edition: str = ""
 
+    autumn_oracle_label: str = "AUTUMN"
+    autumn_oracle_dsn: str = ""
+    autumn_oracle_user: str = ""
+    autumn_oracle_password: str = ""
+    autumn_oracle_edition: str = ""
+    fixture_autumn: bool = True
+
+    approver_access_token: str = ""
+    state_dir: Path | None = None
+    policy_file: Path | None = None
+    baseline_max_age_days: int = 30
+    snapshot_stale_hours: int = 24
+    performance_plan_source: str = "none"
+
     llm_egress_enabled: bool = False
     llm_base_url: str = ""
     llm_api_key: str = ""
@@ -48,6 +62,11 @@ class Settings(BaseSettings):
     llm_token_budget: int = 8000
 
     using_default_token: bool = Field(default=False, exclude=True)
+
+    @field_validator("state_dir", "policy_file", mode="before")
+    @classmethod
+    def _blank_path_is_unset(cls, value: object) -> object:
+        return None if isinstance(value, str) and not value.strip() else value
 
     def model_post_init(self, __context: object) -> None:
         object.__setattr__(
@@ -63,6 +82,18 @@ class Settings(BaseSettings):
     @property
     def production_oracle_configured(self) -> bool:
         return bool(self.prod_oracle_dsn and self.prod_oracle_user)
+
+    @property
+    def autumn_oracle_configured(self) -> bool:
+        return bool(self.autumn_oracle_dsn and self.autumn_oracle_user)
+
+    @property
+    def approvals_enabled(self) -> bool:
+        return bool(self.approver_access_token) and self.approver_access_token != self.app_access_token
+
+    @property
+    def registry_dir(self) -> Path:
+        return self.state_dir if self.state_dir is not None else self.runs_dir / "_registry"
 
     @property
     def llm_configured(self) -> bool:

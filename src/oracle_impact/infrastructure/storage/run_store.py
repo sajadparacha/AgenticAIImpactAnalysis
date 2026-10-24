@@ -1,6 +1,7 @@
 """JSON run directories. Source snapshots stay on disk and out of git."""
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -34,11 +35,13 @@ class RunStore:
             if not trail or trail[-1] != item:
                 trail.append(item)
             trail = trail[-40:]
+        now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
         if detail:
-            events.append({"stage": status, "message": detail})
+            events.append({"stage": status, "message": detail, "at": now})
             events = events[-50:]
         steps = dict(current.get("steps") or {})
-        step = dict(steps.get(status) or {"summary": "", "lines": []})
+        step = dict(steps.get(status) or {"summary": "", "lines": [], "started_at": now})
+        step["updated_at"] = now
         if detail:
             step["summary"] = detail
         recorded = list(step.get("lines") or [])
@@ -78,11 +81,12 @@ class RunStore:
         if not self.root.exists():
             return runs
         for path in self.root.iterdir():
-            if not path.is_dir():
+            if not path.is_dir() or path.name.startswith(("_", ".")):
                 continue
             status = self.read_json(path.name, "status.json") or {}
             request = self.read_json(path.name, "request.json") or {}
             report = self.read_json(path.name, "report.json") or {}
+            requested = path / "request.json"
             runs.append(
                 {
                     "run_id": path.name,
@@ -91,9 +95,11 @@ class RunStore:
                     "model": report.get("model_name") or "",
                     "recommendation": report.get("recommendation_label", ""),
                     "created_at": report.get("created_at", ""),
+                    "report_version": report.get("report_version", ""),
+                    "requested_ns": requested.stat().st_mtime_ns if requested.exists() else 0,
                 }
             )
-        runs.sort(key=lambda item: item.get("created_at") or item["run_id"], reverse=True)
+        runs.sort(key=lambda item: (item.get("created_at") or item["run_id"], item["requested_ns"]), reverse=True)
         return runs
 
     def _dir(self, run_id: str) -> Path:
@@ -112,6 +118,7 @@ class RunStore:
             "report.json",
             "tool_log.json",
             "findings.json",
+            "review.json",
         }:
             raise ValueError("Unknown run artifact.")
         return self._dir(run_id) / name

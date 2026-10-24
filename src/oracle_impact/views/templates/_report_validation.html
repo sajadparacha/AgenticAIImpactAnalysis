@@ -2,21 +2,150 @@
 <section class="rv-panel" id="validation" {{ ui.panel_attrs(state, 'validation', print_mode) }}>
   <div class="panel-head">
     <h2>Validation and approval</h2>
-    <p class="hint">What the analyzer recommends, what a person has decided, and what still has to be checked. This view is read-only: the application has no approval or test-result records to update.</p>
+    <p class="hint">What the policy requires, what has been validated and reviewed, and what a person has decided. Readiness is recomputed from these records each time the page loads. Names are self-declared because development sign-in does not identify a person.</p>
   </div>
 
-  <div class="two-up">
+  <div class="three-up">
+    <div class="card state-card tone-{{ ready.tone }}">
+      <p class="eyebrow">Deployment readiness {{ ui.kind('policy') }}</p>
+      <p class="state-value">{{ ready.label }}</p>
+      <p>{{ ready.summary }}</p>
+      <p class="hint">Policy {{ d.policy_version }}{% if d.policy_computed_now %}, applied now because this report was saved before blocking rules existed{% endif %}. It is a recommendation, not an approval.</p>
+    </div>
     <div class="card state-card tone-{{ rec.tone }}">
       <p class="eyebrow">Analyzer recommendation {{ ui.kind('policy') }}</p>
       <p class="state-value">{{ rec.label }}</p>
       <p>{{ rec.summary }}</p>
       <p class="hint">Computed by the recommendation policy from deterministic findings. The AI investigator cannot upgrade it. It is not a production-safety certification.</p>
     </div>
-    <div class="card state-card tone-neutral">
+    <div class="card state-card tone-{{ 'success' if view.human_decision.state == 'approved' else 'danger' if view.human_decision.state == 'rejected' else 'neutral' }}">
       <p class="eyebrow">Human deployment decision</p>
       <p class="state-value">{{ view.human_decision.label }}</p>
       <p>{{ view.human_decision.detail }}</p>
+      {% if view.human_decision.stale %}<p class="notice notice-warning">Readiness has changed since this decision was recorded. Review it again.</p>{% endif %}
     </div>
+  </div>
+
+  {% if interactive %}
+  <div class="card" id="approval">
+    <div class="card-head"><h3>Record the deployment decision</h3></div>
+    {% if not view.session.approvals_enabled %}
+    <p class="notice notice-info">Approval recording is off because no approver access token is configured (<code>OIA_APPROVER_ACCESS_TOKEN</code>). Record the decision in your change-management process.</p>
+    {% elif view.session.role != 'approver' %}
+    <p class="hint">Only an approver session can record the deployment decision. Sign in with the approver access token.</p>
+    {% else %}
+    <form method="post" action="/analyses/{{ view.run_id }}/approval" class="stack-form narrow">
+      {{ ui.form_head(view, 'validation') }}
+      <fieldset>
+        <legend>Decision</legend>
+        <label class="check"><input type="radio" name="decision" value="approved"{% if ready.decision != 'recommended' %} disabled{% endif %}> Approved{% if ready.decision != 'recommended' %} <span class="hint">(only when readiness is Deployment recommended)</span>{% endif %}</label>
+        <label class="check"><input type="radio" name="decision" value="on_hold" checked> On hold</label>
+        <label class="check"><input type="radio" name="decision" value="rejected"> Rejected</label>
+      </fieldset>
+      <label class="field"><span>Reason and conditions</span><textarea name="notes" rows="3" maxlength="2000" required></textarea></label>
+      {{ ui.actor_field('approval') }}
+      <button type="submit" class="btn">Record decision</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <div class="card" id="policy-items">
+    <div class="card-head"><h3>Blocking rules and required validations <span class="count-chip">{{ view.review['items'] | length }}</span></h3>{{ ui.kind('policy') }}</div>
+    {% if view.review['items'] %}
+    <div class="table-scroll">
+      <table class="data-table compact">
+        <thead><tr><th scope="col">Rule</th><th scope="col">Finding</th><th scope="col">Object</th><th scope="col">How it clears</th><th scope="col">Status</th></tr></thead>
+        <tbody>
+          {% for entry in view.review['items'] %}
+          <tr>
+            <td>{{ ui.tag('Blocker' if entry.kind == 'blocker' else 'Validation', 'danger' if entry.kind == 'blocker' else 'warning') }}<span class="row-meta"><code>{{ entry.item.rule_id }}</code> {{ entry.item.title }}</span></td>
+            <td><a href="{{ ui.finding_href(view, entry.item.finding_id) }}" data-open-finding="{{ entry.item.finding_id }}">{{ entry.item.finding_id }}</a>{% if entry.row %}<span class="row-meta">{{ entry.row.headline }}</span>{% endif %}</td>
+            <td>{% if entry.row and entry.row.object %}<code class="obj">{{ entry.row.object }}</code>{% endif %}</td>
+            <td>{{ entry.resolution }}</td>
+            <td>{{ ui.tag(entry.state_label, entry.tone) }}<span class="row-meta">{{ entry.reason }}</span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="hint">Open a finding to record a validation result or a reviewer decision.</p>
+    {% else %}
+    <p class="empty">No rule in policy {{ d.policy_version }} applies to these findings.</p>
+    {% endif %}
+  </div>
+
+  <div class="card" id="regression-tests">
+    <div class="card-head"><h3>Regression test tracking <span class="count-chip">{{ view.review.validations | length }}</span></h3>{{ ui.kind('verified') }}</div>
+    {% if view.review.validations %}
+    <div class="table-scroll">
+      <table class="data-table compact">
+        <thead><tr><th scope="col">Test case</th><th scope="col">Finding</th><th scope="col">Environment</th><th scope="col">Status</th><th scope="col">Evidence</th><th scope="col">Reviewer</th><th scope="col">Recorded</th></tr></thead>
+        <tbody>
+          {% for record in view.review.validations %}
+          <tr>
+            <td>{{ record.test_case }}{% if record.notes %}<span class="row-meta">{{ record.notes }}</span>{% endif %}</td>
+            <td><a href="{{ ui.finding_href(view, record.finding_id) }}" data-open-finding="{{ record.finding_id }}">{{ record.finding_id }}</a></td>
+            <td>{{ record.environment_label }}</td>
+            <td>{{ ui.tag(record.status_label, {'passed': 'success', 'failed': 'danger', 'blocked': 'warning'}.get(record.status, 'neutral')) }}</td>
+            <td>{{ record.evidence or 'Not given' }}</td>
+            <td>{{ record.assigned_reviewer or 'Not assigned' }}</td>
+            <td>{{ record.updated_at[:16] | replace('T', ' ') }} UTC<span class="row-meta">{{ record.updated_by.name }} (self-declared){% if record.executed_at %} · executed {{ record.executed_at }}{% endif %}</span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty">No test result has been recorded. Results are entered by people; this application does not run tests or import results.</p>
+    {% endif %}
+    {% for check in view.external_checks %}
+    <p class="hint">{{ check.name }}: {{ 'evaluated' if check.evaluated else 'not evaluated' }}. {{ check.reason }}</p>
+    {% endfor %}
+  </div>
+
+  {% set c = view.coverage %}
+  <div class="card" id="coverage">
+    <div class="card-head"><h3>Analysis coverage and blind spots</h3>{{ ui.kind('det') }}</div>
+    {% if c.recorded %}
+    <p><strong>{{ c.analyzed }} of {{ c.in_scope }}</strong> in-scope objects fully analyzed{% if c.percent is not none %} ({{ c.percent }}%){% endif %}. Denominator: {{ c.denominator }}. Completed {{ c.completed_at[:19] | replace('T', ' ') }} UTC in {{ c.environments | map('upper') | join(', ') }}.</p>
+    <div class="table-scroll">
+      <table class="data-table compact">
+        <thead><tr><th scope="col">Object</th><th scope="col">State</th><th scope="col">Why</th></tr></thead>
+        <tbody>
+          {% for item in c['items'] %}
+          <tr>
+            <td><code class="obj">{{ item.qualified }}</code><span class="row-meta">{{ item.object_type | lower }}</span></td>
+            <td>{{ ui.tag(item.label, 'success' if item.state == 'analyzed' else 'warning' if item.state in ['partial', 'skipped'] else 'danger') }}</td>
+            <td>{{ item.reasons | join(' ') or 'Every check ran.' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <h4>Dynamic SQL that static analysis cannot verify</h4>
+    {% if c.dynamic_sql %}
+    <ul class="plain-list">{% for item in c.dynamic_sql %}<li><code>{{ item.owner }}.{{ item.name }}.{{ item.routine }}</code> line {{ item.line }}{% if item.changed %} <strong>(changed)</strong>{% endif %}</li>{% endfor %}</ul>
+    {% else %}<p class="hint">No dynamic SQL found in the Test bodies.</p>{% endif %}
+    <h4>Dependency coverage</h4>
+    <p class="hint">Counted separately from object coverage, as numbers rather than a percentage: there is no complete list of dependencies to divide by. {{ c.dependency.edges }} edges · {{ c.dependency.verified_edges }} verified in ALL_DEPENDENCIES · {{ c.dependency.inferred_edges }} inferred from source · {{ c.dependency.unresolved }} unresolved · {{ c.dependency.gaps }} objects whose dependencies could not be read · {{ c.dependency.skipped_system_objects }} Oracle-supplied references omitted · depth limit {{ c.dependency.max_depth }}.</p>
+    {% else %}
+    <p class="empty">This report version did not record coverage. Readiness is indeterminate until the packages are analyzed again.</p>
+    {% endif %}
+  </div>
+
+  {% set perf = view.performance %}
+  <div class="card" id="performance">
+    <div class="card-head"><h3>SQL performance risk</h3></div>
+    {% if not perf.recorded %}
+    <p class="empty">Not evaluated. This report version did not record SQL statements.</p>
+    {% else %}
+    <p class="notice notice-info"><strong>{{ 'Evaluated' if perf.evaluated else 'Not evaluated' }}.</strong> {{ perf.reason }}</p>
+    {% if perf.statements %}
+    <p class="hint">Modified statements to check for performance in Test:</p>
+    <ul class="plain-list">{% for item in perf.statements %}<li>{{ item.operation }} {{ item.table }} in <code>{{ item.owner }}.{{ item.name }}.{{ item.routine }}</code>{% if item.test_line %} (Test line {{ item.test_line }}){% endif %} · {{ item.change }}</li>{% endfor %}</ul>
+    {% endif %}
+    {% endif %}
   </div>
 
   <div class="card">
@@ -24,12 +153,11 @@
     {% if view.required_actions %}
     <ol class="action-list">{% for action in view.required_actions %}<li>{{ action }}</li>{% endfor %}</ol>
     {% else %}<p class="empty">The recommendation policy recorded no actions.</p>{% endif %}
-    <p class="hint">Completion is not tracked in this report.</p>
   </div>
 
   <div class="card">
     <div class="card-head"><h3>Recommended tests</h3></div>
-    <p class="notice notice-info">No test execution records exist for this run. The tests below are recommendations; none has been run by this application.</p>
+    <p class="notice notice-info">These tests are recommendations. The application does not run them; record results against each finding.</p>
     {% if view.tests %}
     {% macro test_group(group) %}
       <li>

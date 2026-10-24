@@ -225,4 +225,37 @@ def build_demo_catalogs() -> tuple[Catalog, Catalog]:
         constraints=[Constraint(name="PK_BILLING_HISTORY", constraint_type="P", columns=["CUSTOMER_ID"])],
         triggers=[],
     )
+    # The Test spec of PKG_BILLING added a mandatory parameter, so the existing
+    # two-argument call in PKG_LEGACY no longer compiles in Test.
+    test.set_status("DEMO", "PKG_LEGACY", "PACKAGE BODY", "INVALID")
+    test.add_compile_error(
+        "DEMO",
+        "PKG_LEGACY",
+        "PACKAGE BODY",
+        4,
+        "PLS-00306: wrong number or types of arguments in call to 'CREATE_INVOICE'",
+        position=5,
+    )
     return test, prod
+
+
+def build_autumn_catalog() -> Catalog:
+    """Staging copy: PKG_STATUS was promoted from Test, PKG_BILLING was not."""
+    autumn = Catalog()
+    autumn.add_source("DEMO", "PKG_STATUS", "PACKAGE", _STATUS_SPEC_TEST)
+    autumn.add_source("DEMO", "PKG_STATUS", "PACKAGE BODY", _STATUS_BODY_TEST)
+    autumn.add_arguments("DEMO", "PKG_STATUS", _status_arguments(True))
+    autumn.add_source("DEMO", "PKG_BILLING", "PACKAGE", _BILLING_SPEC_PROD)
+    autumn.add_source("DEMO", "PKG_BILLING", "PACKAGE BODY", _BILLING_BODY_PROD)
+    autumn.add_arguments("DEMO", "PKG_BILLING", _billing_arguments(False))
+    autumn.add_source("DEMO", "PKG_DASHBOARD", "PACKAGE", "PACKAGE pkg_dashboard AS PROCEDURE show_status(p_employee_id IN NUMBER); END;")
+    autumn.add_source("DEMO", "PKG_DASHBOARD", "PACKAGE BODY", _DASHBOARD_BODY)
+    autumn.add_source("DEMO", "PKG_LEGACY", "PACKAGE", "PACKAGE pkg_legacy AS PROCEDURE submit_bill(p_customer_id IN NUMBER, p_bill_date IN DATE); END;")
+    autumn.add_source("DEMO", "PKG_LEGACY", "PACKAGE BODY", _LEGACY_BODY)
+    autumn.add_dependency(("DEMO", "PKG_STATUS", "PACKAGE BODY"), ("DEMO", "EMPLOYEE_STATUS", "TABLE"))
+    autumn.add_dependency(("DEMO", "PKG_DASHBOARD", "PACKAGE BODY"), ("DEMO", "PKG_STATUS", "PACKAGE"))
+    autumn.add_dependency(("DEMO", "PKG_BILLING", "PACKAGE BODY"), ("DEMO", "CUSTOMER_BILLS", "TABLE"))
+    autumn.add_dependency(("DEMO", "PKG_LEGACY", "PACKAGE BODY"), ("DEMO", "PKG_BILLING", "PACKAGE"))
+    autumn.add_table("DEMO", "EMPLOYEE_STATUS", **_employee_table())
+    autumn.add_table("DEMO", "CUSTOMER_BILLS", **_bills_table())
+    return autumn

@@ -8,10 +8,12 @@ from oracle_impact.analysis.hashing import source_hash
 from oracle_impact.infrastructure.oracle.gateway import (
     ArgumentFetch,
     DependencyFetch,
+    ErrorFetch,
     GrantFetch,
     OracleAccessError,
     OracleUnavailable,
     SourceRecord,
+    StatusFetch,
     utc_now,
 )
 from oracle_impact.infrastructure.oracle.queries import QUERIES, SESSION_SQL, apply_dictionary_views
@@ -155,6 +157,29 @@ class OracledbGateway:
         except OracleAccessError:
             return GrantFetch(inaccessible=True, complete=False)
         return GrantFetch(complete=False, grants=[(row[0], row[1]) for row in rows])
+
+    def fetch_object_status(self, owner: str, name: str) -> StatusFetch:
+        try:
+            rows = self._select("object_validity", owner=owner, name=name)
+        except OracleUnavailable:
+            raise
+        except OracleAccessError:
+            return StatusFetch(inaccessible=True)
+        return StatusFetch(objects=[(row[0] or "", row[1] or "", row[2]) for row in rows])
+
+    def fetch_compile_errors(self, owner: str, name: str) -> ErrorFetch:
+        try:
+            rows = self._select("compile_errors", owner=owner, name=name)
+        except OracleUnavailable:
+            raise
+        except OracleAccessError:
+            return ErrorFetch(inaccessible=True)
+        return ErrorFetch(
+            errors=[
+                (row[0] or "", int(row[1] or 0), int(row[2] or 0), (row[3] or "").strip(), row[4] or "ERROR")
+                for row in rows
+            ]
+        )
 
     def fetch_table(self, owner: str, table: str) -> TableMetadata:
         try:

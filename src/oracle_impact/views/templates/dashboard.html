@@ -4,7 +4,7 @@
 <section class="page-intro">
   <div>
     <h1>Review a package change set before promotion</h1>
-    <p class="lede">Compare selected packages in Test, the proposed version, with Production, the baseline. Autumn is a later promotion stage and is not connected.</p>
+    <p class="lede">Compare selected packages in Test, the proposed version, with Production, the baseline. {% if autumn_label %}{{ autumn_label }} is also read to show which changes were already promoted to staging.{% else %}AUTUMN is a later promotion stage and is not connected.{% endif %}</p>
   </div>
 </section>
 
@@ -23,6 +23,11 @@
     <p class="stat-label">Production</p>
     <p class="stat-value">{{ settings.prod_oracle_label }}</p>
     <p class="stat-note">{% if settings.fixture_mode %}Fixture{% elif settings.production_oracle_configured %}Configured{% else %}Not configured{% endif %}</p>
+  </article>
+  <article class="stat">
+    <p class="stat-label">AUTUMN</p>
+    <p class="stat-value">{{ autumn_label or 'Not connected' }}</p>
+    <p class="stat-note">{% if autumn_label %}{% if settings.fixture_mode %}Fixture{% else %}Configured{% endif %}, compared for promotion state only{% else %}Optional. Set OIA_AUTUMN_ORACLE_DSN to compare staging.{% endif %}</p>
   </article>
   <article class="stat">
     <p class="stat-label">AI review</p>

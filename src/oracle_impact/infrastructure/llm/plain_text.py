@@ -86,8 +86,9 @@ _GROUPS = {
     "exception": ("transaction", "Transactions"),
     "error_contract": ("interface", "Interface"),
     "security": ("security", "Security"),
+    "compilation": ("compilation", "Compilation"),
 }
-_GROUP_ORDER = ("interface", "business", "data", "transaction", "security", "other")
+_GROUP_ORDER = ("compilation", "interface", "business", "data", "transaction", "security", "other")
 
 
 def issue_list(report) -> dict:

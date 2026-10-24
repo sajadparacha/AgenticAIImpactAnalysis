@@ -4,7 +4,21 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from oracle_impact.models.assessment import (
+    Comparison,
+    CompilationSummary,
+    CoverageSummary,
+    DependencyEdgeRecord,
+    ExternalCheck,
+    ObjectState,
+    PerformanceAssessment,
+    PolicyEvaluation,
+    TransactionProfile,
+)
 from oracle_impact.models.enums import Confidence, EvidenceStatus, Recommendation, Severity
+from oracle_impact.models.report_parts import DiffRow, ObjectDiff
+
+__all__ = ["DiffRow", "Finding", "ObjectDiff", "Report"]
 
 
 class Finding(BaseModel):
@@ -29,28 +43,9 @@ class Finding(BaseModel):
     proposed_tests: list[str] = Field(default_factory=list)
     attributes: dict[str, Any] = Field(default_factory=dict)
     origin: str = "deterministic"
-
-
-class DiffRow(BaseModel):
-    test_line_no: int | None = None
-    test_text: str = ""
-    test_kind: str = "empty"
-    prod_line_no: int | None = None
-    prod_text: str = ""
-    prod_kind: str = "empty"
-
-
-class ObjectDiff(BaseModel):
-    owner: str
-    name: str
-    object_type: str
-    test_hash: str | None = None
-    prod_hash: str | None = None
-    added: int = 0
-    removed: int = 0
-    formatting_only: bool = False
-    unchanged: bool = False
-    rows: list[DiffRow] = Field(default_factory=list)
+    fingerprint: str = ""
+    rule_id: str = ""
+    severity_rationale: str = ""
 
 
 class ChangeRow(BaseModel):
@@ -94,6 +89,7 @@ class ReportStatistics(BaseModel):
 
 class Report(BaseModel):
     report_version: str = "1.0"
+    """1.1 adds the sections below `tool_log`. Reports saved as 1.0 load with those sections empty."""
     run_id: str
     created_at: str
     packages: list[str]
@@ -115,3 +111,13 @@ class Report(BaseModel):
     limitations: list[str] = Field(default_factory=list)
     diagram_svg: str = ""
     tool_log: list[dict] = Field(default_factory=list)
+    environments: list[EnvironmentInfo] = Field(default_factory=list)
+    object_states: list[ObjectState] = Field(default_factory=list)
+    comparisons: list[Comparison] = Field(default_factory=list)
+    compilation: CompilationSummary | None = None
+    coverage: CoverageSummary | None = None
+    transaction_profiles: list[TransactionProfile] = Field(default_factory=list)
+    performance: PerformanceAssessment | None = None
+    dependency_edges: list[DependencyEdgeRecord] = Field(default_factory=list)
+    policy: PolicyEvaluation | None = None
+    external_checks: list[ExternalCheck] = Field(default_factory=list)

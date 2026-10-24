@@ -253,8 +253,91 @@ def _compare_pair(
     test_names = _names(test_sig.params)
     prod_by_name = {param.name.upper(): param for param in prod_sig.params}
     test_by_name = {param.name.upper(): param for param in test_sig.params}
+    if prod_names != test_names and sorted(prod_names) == sorted(test_names):
+        found.append(
+            _with_callers(
+                SignatureChange(
+                    package=package,
+                    routine=routine,
+                    kind="reordered_parameters",
+                    breaking=True,
+                    detail=(
+                        f"{routine} parameter order changed from ({', '.join(prod_names)}) "
+                        f"to ({', '.join(test_names)}). Positional calls bind to different parameters."
+                    ),
+                    test_lines=[_line_of(spec_test, routine)],
+                    prod_lines=[_line_of(spec_prod, routine)],
+                ),
+                callers,
+                selected,
+                snapshot,
+            )
+        )
+        return found
+    if (
+        prod_names != test_names
+        and len(prod_names) == len(test_names)
+        and all(
+            old.data_type == new.data_type and old.in_out == new.in_out
+            for old, new in zip(prod_sig.params, test_sig.params, strict=True)
+        )
+    ):
+        renamed = [
+            f"{old.name} to {new.name}"
+            for old, new in zip(prod_sig.params, test_sig.params, strict=True)
+            if old.name.upper() != new.name.upper()
+        ]
+        found.append(
+            _with_callers(
+                SignatureChange(
+                    package=package,
+                    routine=routine,
+                    kind="renamed_parameter",
+                    breaking=True,
+                    detail=f"{routine} renamed parameter(s) {', '.join(renamed)}. Calls that use named notation fail.",
+                    test_lines=[_line_of(spec_test, test_sig.params[0].name if test_sig.params else routine)],
+                    prod_lines=[_line_of(spec_prod, prod_sig.params[0].name if prod_sig.params else routine)],
+                ),
+                callers,
+                selected,
+                snapshot,
+            )
+        )
+        return found
     if prod_names == test_names:
         for prod_param, test_param in zip(prod_sig.params, test_sig.params, strict=True):
+            if prod_param.defaulted and not test_param.defaulted:
+                found.append(
+                    _with_callers(
+                        SignatureChange(
+                            package=package,
+                            routine=routine,
+                            kind="default_removed",
+                            breaking=True,
+                            detail=(
+                                f"{routine}.{prod_param.name} no longer has a default value. "
+                                "Calls that omit it fail to compile."
+                            ),
+                            test_lines=[_line_of(spec_test, test_param.name)],
+                            prod_lines=[_line_of(spec_prod, prod_param.name)],
+                        ),
+                        callers,
+                        selected,
+                        snapshot,
+                    )
+                )
+            elif test_param.defaulted and not prod_param.defaulted:
+                found.append(
+                    SignatureChange(
+                        package=package,
+                        routine=routine,
+                        kind="default_added",
+                        breaking=False,
+                        detail=f"{routine}.{prod_param.name} now has a default value. Existing calls still bind.",
+                        test_lines=[_line_of(spec_test, test_param.name)],
+                        prod_lines=[_line_of(spec_prod, prod_param.name)],
+                    )
+                )
             if prod_param.data_type != test_param.data_type:
                 found.append(
                     _with_callers(

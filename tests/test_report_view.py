@@ -63,7 +63,11 @@ def test_recommendation_comes_from_policy_and_human_decision_is_not_recorded(tmp
     assert view["human_decision"] == {**view["human_decision"], "state": "not_recorded", "label": "Not recorded"}
     page = _render(report)
     assert "Human deployment decision" in page
-    assert "on hold" not in page.lower()
+    # "Deployment on hold" is the analyzer's policy readiness; no human decision is claimed.
+    assert view["decision"]["readiness"]["decision"] == "on_hold"
+    assert view["decision"]["readiness"]["open_blockers"] >= 1
+    assert view["approval"]["latest"] is None
+    assert 'name="decision"' not in page
     assert "No one has approved or rejected this change" in page
     assert not re.search(r"(deployment|change) (approved|rejected)|approved by", page, re.IGNORECASE)
 

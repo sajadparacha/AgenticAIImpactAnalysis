@@ -30,6 +30,23 @@
 {{ view.base_url }}?tab=source&amp;object={{ link.key | urlencode }}{% if link.line %}&amp;line={{ link.line }}&amp;side={{ link.side }}{% endif %}
 {%- endmacro %}
 
+{% macro tag(label, tone) -%}
+<span class="tag tone-{{ tone or 'neutral' }}">{{ label }}</span>
+{%- endmacro %}
+
+{% macro form_head(view, return_tab) -%}
+<input type="hidden" name="csrf_token_value" value="{{ view.session.csrf }}">
+<input type="hidden" name="return_tab" value="{{ return_tab }}">
+{%- endmacro %}
+
+{% macro actor_field(id_prefix) -%}
+<label class="field"><span>Your name <small>(self-declared, recorded with the entry)</small></span><input name="actor_name" id="{{ id_prefix }}-actor" maxlength="80" autocomplete="name"></label>
+{%- endmacro %}
+
+{% macro short_hash(value) -%}
+{%- if value -%}<code class="hash" title="{{ value }}">{{ value[:12] }}</code>{%- else -%}<span class="hint">Not captured</span>{%- endif -%}
+{%- endmacro %}
+
 {% macro panel_attrs(state, key, print_mode) -%}
 role="tabpanel" aria-labelledby="tab-{{ key }}" data-panel="{{ key }}" tabindex="-1"{% if not print_mode and state.tab != key %} hidden{% endif %}
 {%- endmacro %}

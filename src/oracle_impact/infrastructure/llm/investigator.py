@@ -7,6 +7,7 @@ error. Deterministic findings are never replaced by this component.
 import json
 import re
 import time
+from datetime import datetime, timezone
 
 from oracle_impact.infrastructure.evidence.validator import validate_findings
 from oracle_impact.infrastructure.llm.plain_text import simplify_change, simplify_test, simplify_unknown
@@ -146,6 +147,7 @@ class Investigator:
                                 "target": _tool_target(call),
                                 "ok": "error" not in payload,
                                 "result_bytes": len(json.dumps(payload)),
+                                "at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
                             }
                         )
                         messages.append(

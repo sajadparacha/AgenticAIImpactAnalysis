@@ -119,7 +119,7 @@ def _signature_finding(run_id: str, snapshot: Snapshot, change: SignatureChange)
         confidence = Confidence.LOW
         attributes = {"blocks_eligibility": True}
         action = "Grant read access to argument metadata or review the specification manually."
-    elif change.kind == "compatible_optional":
+    elif change.kind in {"compatible_optional", "default_added"}:
         severity = Severity.LOW
         status = EvidenceStatus.CONFIRMED
         confidence = Confidence.HIGH
@@ -154,6 +154,15 @@ def _signature_finding(run_id: str, snapshot: Snapshot, change: SignatureChange)
         path = [f"{caller} -> {change.package}.{change.routine}" for caller in change.external_callers]
     elif change.coordinated_callers:
         path = [f"{caller} -> {change.package}.{change.routine}" for caller in change.coordinated_callers]
+    attributes = {
+        **attributes,
+        "signature_kind": change.kind,
+        "routine": change.routine,
+        "signature_difference": "unknown" if change.kind == "metadata_gap" else "confirmed",
+        "caller_impact": _caller_impact(change),
+        "callers": list(change.external_callers),
+        "coordinated_callers": list(change.coordinated_callers),
+    }
     return _base_finding(
         run_id,
         snapshot,
@@ -179,6 +188,19 @@ def _signature_finding(run_id: str, snapshot: Snapshot, change: SignatureChange)
     )
 
 
+def _caller_impact(change: SignatureChange) -> str:
+    """Caller impact is never more than potential here: dictionary edges show a dependency, not the call shape."""
+    if change.kind == "metadata_gap":
+        return "unknown"
+    if not change.breaking and not change.unresolved:
+        return "none_expected"
+    if change.external_callers:
+        return "potential"
+    if change.coordinated_callers:
+        return "coordinated"
+    return "none_visible"
+
+
 def _gap_finding(run_id: str, gap: str) -> Finding:
     return Finding(
         id=finding_id(run_id, "coverage", gap),
@@ -200,15 +222,16 @@ def _gap_finding(run_id: str, gap: str) -> Finding:
 
 
 def _drift_finding(run_id: str, qualified: str) -> Finding:
-    owner, _, rest = qualified.partition(".")
-    name = rest.split()[0] if rest else qualified
+    environment, _, located = qualified.partition(" ")
+    owner, _, rest = located.partition(".")
+    name, _, object_type = rest.partition(" ")
     return Finding(
         id=finding_id(run_id, "drift", qualified),
         changed_object=qualified,
         object_owner=owner,
-        object_name=name,
-        object_type="PACKAGE",
-        source_database="test",
+        object_name=name or qualified,
+        object_type=object_type or "PACKAGE",
+        source_database=environment or "test",
         change_category="coverage",
         evidence=f"{qualified} changed between the initial read and the verification read.",
         severity=Severity.MEDIUM,
@@ -632,7 +655,7 @@ def _threshold_finding(run_id, snapshot, owner, name, routine, changes: list[str
         ),
         recommended_action="Review the changed threshold with the business owner and add a boundary test.",
         proposed_tests=["Execute values immediately below and above the old and new thresholds."],
-        attributes={"blocks_eligibility": True, "financial": financial},
+        attributes={"blocks_eligibility": True, "financial": financial, "threshold": True},
     )
 
 

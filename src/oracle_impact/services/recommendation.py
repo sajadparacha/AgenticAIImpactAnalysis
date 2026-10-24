@@ -19,6 +19,7 @@ def decide(findings: list[Finding]) -> tuple[Recommendation, list[str], list[str
         if finding.attributes.get("breaking")
         or finding.attributes.get("missing_object")
         or finding.attributes.get("partial_commit_hazard")
+        or (finding.attributes.get("compile_invalid") and finding.attributes.get("compile_scope") == "in_scope")
     ]
     if blocking:
         for finding in blocking:

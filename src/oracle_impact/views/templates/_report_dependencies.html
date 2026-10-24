@@ -2,8 +2,77 @@
 <section class="rv-panel" id="dependencies" {{ ui.panel_attrs(state, 'dependencies', print_mode) }}>
   <div class="panel-head">
     <h2>Dependencies</h2>
-    <p class="hint">Callers and referenced objects read from the Oracle dependency dictionary of the named database, to a limited depth. Linked findings are those whose changed object, affected object, or call path names the edge's object. Business processes are not mapped, so business impact is shown as not mapped instead of guessed.</p>
+    <p class="hint">Callers and referenced objects read from the Oracle dependency dictionary of the named database, to a limited depth. Linked findings are those whose changed object, affected object, or call path names the edge's object. Business impact comes only from maintained mappings; it is never guessed.</p>
   </div>
+
+  {% if view.dep_tree %}
+  <div class="card">
+    <div class="card-head"><h3>Impact paths</h3>{{ ui.kind('det') }}</div>
+    <p class="hint">Expand a package to follow callers (who calls it) and callees (what it uses). Edges inferred from source or left unresolved are marked; only dictionary edges are verified.</p>
+    {% macro tree(nodes) -%}
+    <ul class="dep-tree">
+      {% for node in nodes %}
+      <li>
+        {% if node.children %}<details{% if print_mode %} open{% endif %}><summary>{% endif %}
+        <code class="obj">{{ node.label }}</code> <span class="hint">{{ node.type | lower }}</span>
+        <span class="prov prov-{{ node.provenance }}">{{ node.provenance_label }}</span>
+        {% for fid in node.finding_ids %}<a href="{{ ui.finding_href(view, fid) }}" data-open-finding="{{ fid }}" class="chip-link">{{ fid }}</a> {% endfor %}
+        {% if node.children %}</summary>{{ tree(node.children) }}</details>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {%- endmacro %}
+    {% for root in view.dep_tree %}
+    <details class="dep-root"{% if print_mode or loop.first %} open{% endif %}>
+      <summary><code class="obj">{{ root.package }}</code> <span class="hint">{{ root.callers | length }} direct caller{{ 's' if root.callers | length != 1 }} · {{ root.uses | length }} direct callee{{ 's' if root.uses | length != 1 }}</span></summary>
+      <div class="two-up">
+        <div><h4>Callers</h4>{% if root.callers %}{{ tree(root.callers) }}{% else %}<p class="hint">No caller recorded in the dictionary.</p>{% endif %}</div>
+        <div><h4>Uses</h4>{% if root.uses %}{{ tree(root.uses) }}{% else %}<p class="hint">No referenced object recorded.</p>{% endif %}</div>
+      </div>
+    </details>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if view.edges %}
+  <div class="card">
+    <div class="card-head"><h3>All edges with provenance <span class="count-chip">{{ view.edges | length }}</span></h3></div>
+    {% if not print_mode %}
+    <div class="toolbar" data-edge-filters role="search" aria-label="Filter edges">
+      <label class="field field-grow"><span>Search</span><input type="search" data-edge-filter="eq" placeholder="Object, type…" autocomplete="off"></label>
+      <label class="field"><span>Direction</span>
+        <select data-edge-filter="edir"><option value="">All</option><option value="caller">Calls</option><option value="uses">Uses</option></select>
+      </label>
+      <label class="field"><span>Provenance</span>
+        <select data-edge-filter="eprov"><option value="">All</option>{% for key, label in [('dictionary', 'Verified (ALL_DEPENDENCIES)'), ('source_scan', 'Inferred from source'), ('unresolved', 'Unresolved')] if view.edges | selectattr('provenance', 'equalto', key) | list %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select>
+      </label>
+      <label class="field"><span>Object type</span>
+        <select data-edge-filter="etype"><option value="">All</option>{% for kind in view.edges | map(attribute='other_type') | unique | sort %}<option value="{{ kind }}">{{ kind | lower }}</option>{% endfor %}</select>
+      </label>
+    </div>
+    <p class="result-count" data-edge-count aria-live="polite">Showing {{ view.edges | length }} of {{ view.edges | length }} edges</p>
+    {% endif %}
+    <div class="table-scroll">
+      <table class="data-table compact">
+        <thead><tr><th scope="col">From</th><th scope="col">Relationship</th><th scope="col">To</th><th scope="col">Depth</th><th scope="col">Provenance</th><th scope="col">Database</th><th scope="col">Findings</th></tr></thead>
+        <tbody>
+          {% for edge in view.edges %}
+          <tr id="{{ edge.dom_id }}" data-edge data-dir="{{ edge.direction }}" data-prov="{{ edge.provenance }}" data-type="{{ edge.other_type }}" data-search="{{ edge.search }}">
+            <td><code class="obj">{{ edge.from }}</code><span class="row-meta">{{ edge.from_type | lower }}</span></td>
+            <td>{{ 'depends on' }}</td>
+            <td><code class="obj">{{ edge.to }}</code><span class="row-meta">{{ edge.to_type | lower }}</span></td>
+            <td>{{ edge.depth }}</td>
+            <td><span class="prov prov-{{ edge.provenance }}">{{ edge.provenance_label }}</span>{% if edge.note and edge.provenance != 'dictionary' %}<span class="row-meta">{{ edge.note }}</span>{% endif %}</td>
+            <td>{{ edge.databases | join(', ') }}</td>
+            <td>{% for fid in edge.finding_ids %}<a href="{{ ui.finding_href(view, fid) }}" data-open-finding="{{ fid }}" class="chip-link">{{ fid }}</a> {% else %}<span class="hint">None</span>{% endfor %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if not print_mode %}<p class="empty" data-edge-empty hidden>No edge matches these filters.</p>{% endif %}
+  </div>
+  {% endif %}
   {% if report.diagram_svg %}
   <details class="diagram-wrap"{% if print_mode or view.dependencies | length <= 12 %} open{% endif %}>
     <summary>Dependency diagram</summary>
@@ -47,7 +116,7 @@
             {% for item in dep.findings %}<a href="{{ ui.finding_href(view, item.id) }}" data-open-finding="{{ item.id }}" class="chip-link">{{ ui.sev(item.level, item.level_label) }} {{ item.id }}</a> {% else %}<span class="hint">None</span>{% endfor %}
           </td>
           <td class="dev-only">{{ dep.database | capitalize }} dictionary<span class="row-meta">depth {{ dep.depth }}</span></td>
-          <td><span class="hint">Not mapped</span></td>
+          <td>{% set mapped = view.business.rows | selectattr('qualified', 'equalto', dep.qualified) | list %}{% if mapped %}{% for row in mapped %}{{ ui.tag(row.label, row.tone) }} <span class="row-meta">{{ row.mapping.business_process }}</span>{% endfor %}{% else %}<span class="hint">Not established</span>{% endif %}</td>
         </tr>
         {% endfor %}
       </tbody>

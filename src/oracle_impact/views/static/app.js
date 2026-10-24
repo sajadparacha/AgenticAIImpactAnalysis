@@ -155,9 +155,13 @@ if (reportRoot && !reportRoot.classList.contains("is-print")) {
 
 function initReport(root) {
   const PAGE = 50;
-  const FILTER_KEYS = ["q", "sev", "type", "cat", "src", "ev", "drivers"];
+  const FILTER_KEYS = ["q", "sev", "type", "cat", "src", "ev", "ec", "val", "blk", "env", "chg", "drivers"];
+  const SELECT_KEYS = ["sev", "type", "cat", "src", "ev", "ec", "val", "blk", "env", "chg"];
   const DEP_KEYS = ["dq", "dir", "impact"];
-  const LEGACY = { comparison: "source", changes: "findings", dependencies: "dependencies", ai: "validation", risk: "overview", limitations: "validation", validation: "validation", audit: "audit", overview: "overview" };
+  const EDGE_KEYS = ["eq", "edir", "eprov", "etype"];
+  const LEGACY = { comparison: "source", changes: "findings", dependencies: "dependencies", ai: "validation", risk: "overview", limitations: "validation", validation: "validation", audit: "audit", overview: "overview",
+    objects: "objects", compilation: "objects", transactions: "objects", coverage: "validation", approval: "validation",
+    "policy-items": "validation", "regression-tests": "validation", performance: "validation", history: "audit" };
   const EVIDENCE_ORDER = { confirmed: 0, potential: 1, unknown: 2 };
   const base = root.dataset.base;
   const tabs = [...root.querySelectorAll("[data-tab-link]")];
@@ -167,6 +171,7 @@ function initReport(root) {
   const tbody = root.querySelector("[data-findings-table] tbody");
   const rows = tbody ? [...tbody.querySelectorAll("[data-row]")] : [];
   const depRows = [...root.querySelectorAll("[data-dep]")];
+  const edgeRows = [...root.querySelectorAll("[data-edge]")];
   const highlighted = new WeakSet();
   const state = {
     tab: root.dataset.tab || "overview",
@@ -175,8 +180,10 @@ function initReport(root) {
     object: root.dataset.object || "",
     line: root.dataset.line || "",
     side: root.dataset.side || "t",
+    cmp: root.dataset.cmp || "",
     filters: {},
     dep: {},
+    edge: {},
     sort: { key: "rank", dir: 1 },
     limit: PAGE,
   };
@@ -194,6 +201,7 @@ function initReport(root) {
     }
     FILTER_KEYS.forEach((key) => { state.filters[key] = params.get(key) || ""; });
     DEP_KEYS.forEach((key) => { state.dep[key] = params.get(key) || ""; });
+    EDGE_KEYS.forEach((key) => { state.edge[key] = params.get(key) || ""; });
     const sort = params.get("sort");
     if (sort) {
       state.sort = { key: sort.replace(/^-/, ""), dir: sort.startsWith("-") ? -1 : 1 };
@@ -212,8 +220,10 @@ function initReport(root) {
         params.set("side", state.side);
       }
     }
+    if (state.cmp) params.set("cmp", state.cmp);
     FILTER_KEYS.forEach((key) => { if (state.filters[key]) params.set(key, state.filters[key]); });
     DEP_KEYS.forEach((key) => { if (state.dep[key]) params.set(key, state.dep[key]); });
+    EDGE_KEYS.forEach((key) => { if (state.edge[key]) params.set(key, state.edge[key]); });
     if (state.sort.key !== "rank" || state.sort.dir !== 1) params.set("sort", (state.sort.dir < 0 ? "-" : "") + state.sort.key);
     const query = params.toString();
     const url = base + (query ? "?" + query : "");
@@ -267,7 +277,7 @@ function initReport(root) {
   function rowMatches(row) {
     const f = state.filters;
     if (f.q && !row.dataset.search.includes(f.q.toLowerCase())) return false;
-    for (const key of ["sev", "type", "cat", "src", "ev"]) {
+    for (const key of SELECT_KEYS) {
       if (f[key] && row.dataset[key] !== f[key]) return false;
     }
     if (f.drivers && !row.dataset.drivers) return false;
@@ -320,7 +330,34 @@ function initReport(root) {
     root.querySelectorAll("[data-dep-filter]").forEach((input) => {
       input.value = state.dep[input.dataset.depFilter === "q" ? "dq" : input.dataset.depFilter] || "";
     });
+    root.querySelectorAll("[data-edge-filter]").forEach((input) => {
+      input.value = state.edge[input.dataset.edgeFilter] || "";
+    });
   }
+
+  function applyEdges() {
+    if (!edgeRows.length) return;
+    let shown = 0;
+    edgeRows.forEach((row) => {
+      const ok = (!state.edge.eq || row.dataset.search.includes(state.edge.eq.toLowerCase()))
+        && (!state.edge.edir || row.dataset.dir === state.edge.edir)
+        && (!state.edge.eprov || row.dataset.prov === state.edge.eprov)
+        && (!state.edge.etype || row.dataset.type === state.edge.etype);
+      row.hidden = !ok;
+      if (ok) shown += 1;
+    });
+    const count = root.querySelector("[data-edge-count]");
+    if (count) count.textContent = `Showing ${shown} of ${edgeRows.length} edges`;
+    const empty = root.querySelector("[data-edge-empty]");
+    if (empty) empty.hidden = shown > 0;
+  }
+  root.querySelectorAll("[data-edge-filter]").forEach((input) => {
+    input.addEventListener(input.type === "search" ? "input" : "change", () => {
+      state.edge[input.dataset.edgeFilter] = input.value.trim();
+      applyEdges();
+      writeUrl(false);
+    });
+  });
 
   root.querySelectorAll("[data-filter]").forEach((input) => {
     const handler = () => {
@@ -367,7 +404,8 @@ function initReport(root) {
   });
 
   function focusables() {
-    return [...drawer.querySelectorAll("a[href], button:not([disabled]), [tabindex='0']")].filter((node) => !node.closest("[hidden]"));
+    return [...drawer.querySelectorAll("a[href], button:not([disabled]), input:not([type='hidden']):not([disabled]), select, textarea, summary, [tabindex='0']")]
+      .filter((node) => !node.closest("[hidden]") && !(node.closest("details:not([open])") && node.tagName !== "SUMMARY"));
   }
 
   function openFinding(id, options = {}) {
@@ -633,6 +671,7 @@ function initReport(root) {
     syncFilterInputs();
     applyFindings();
     applyDependencies();
+    applyEdges();
     filterObjects();
     showTab(state.tab, { write: false });
     if (state.finding) openFinding(state.finding, { write: false });

@@ -34,6 +34,7 @@ SOURCE_LABELS = {
     "ai": "AI assessment only",
 }
 CATEGORY_LABELS = {
+    "compilation": "Compilation",
     "interface": "Interface",
     "business": "Business rules",
     "data": "Data",
@@ -42,7 +43,7 @@ CATEGORY_LABELS = {
     "coverage": "Coverage gap",
     "other": "Other",
 }
-TABS = ("overview", "findings", "source", "dependencies", "validation", "audit")
+TABS = ("overview", "findings", "objects", "source", "dependencies", "validation", "audit")
 MODES = ("developer", "support")
 STAGES = (
     ("queued", "Queued"),
@@ -87,8 +88,54 @@ _TOOL_LABELS = {
 }
 
 
-def build_report_view(report: Report, status: dict | None = None) -> dict:
-    """Everything the report templates display, derived from saved run data only."""
+def build_report_view(report: Report, status: dict | None = None, decision: dict | None = None, session: dict | None = None) -> dict:
+    """Everything the report templates display, derived from saved run data and recorded review facts only."""
+    from oracle_impact.services.decision_service import offline_context
+    from oracle_impact.services.decision_view import apply_decision
+
+    view = _base_view(report, status)
+    apply_decision(view, report, decision or offline_context(report))
+    view["session"] = session or {"role": None, "csrf": "", "approvals_enabled": False, "interactive": False}
+    view["comparison_sets"] = _comparison_sets(report, view)
+    return view
+
+
+def _comparison_sets(report: Report, view: dict) -> list[dict]:
+    labels = view["environment_labels"]
+    sets = [
+        {
+            "key": "test:production",
+            "label": f"{labels['test']} → {labels['production']}",
+            "source_label": labels["test"],
+            "target_label": labels["production"],
+            "source_role": "proposed",
+            "target_role": "baseline",
+            "diffs": view["diffs"],
+            "primary": True,
+        }
+    ]
+    for number, comparison in enumerate(report.comparisons, start=1):
+        diffs = []
+        for index, diff in enumerate(comparison.diffs):
+            item = _diff(number * 1000 + index, diff)
+            item["findings"] = []
+            diffs.append(item)
+        sets.append(
+            {
+                "key": comparison.key,
+                "label": f"{comparison.source_label} → {comparison.target_label}",
+                "source_label": comparison.source_label,
+                "target_label": comparison.target_label,
+                "source_role": comparison.source_environment,
+                "target_role": comparison.target_environment,
+                "diffs": diffs,
+                "primary": False,
+            }
+        )
+    return sets
+
+
+def _base_view(report: Report, status: dict | None) -> dict:
     issues = issue_list(report)
     diffs = _diffs(report)
     diff_lookup = {item["key"]: item for item in diffs}
@@ -203,7 +250,7 @@ def initial_state(view: dict, params) -> dict:
     line = str(params.get("line") or "")
     side = str(params.get("side") or "t")
     mode = str(params.get("mode") or "")
-    return {
+    state = {
         "tab": tab,
         "finding": finding,
         "object": obj,
@@ -211,6 +258,16 @@ def initial_state(view: dict, params) -> dict:
         "side": side if side in {"t", "p"} else "t",
         "mode": mode if mode in MODES else "developer",
     }
+    cmp = str(params.get("cmp") or "")
+    if cmp and cmp != "test:production" and any(item["key"] == cmp for item in view.get("comparison_sets", [])):
+        state["cmp"] = cmp
+    return state
+
+
+def active_comparison(view: dict, state: dict) -> dict:
+    sets = view.get("comparison_sets") or []
+    wanted = state.get("cmp") or "test:production"
+    return next((item for item in sets if item["key"] == wanted), sets[0] if sets else {"key": "test:production", "diffs": view["diffs"], "primary": True})
 
 
 def format_timestamp(value: str | None) -> str:
@@ -425,6 +482,7 @@ def _category(change_category: str) -> str:
         "error_contract": "interface",
         "security": "security",
         "coverage": "coverage",
+        "compilation": "compilation",
     }.get(change_category, "other")
 
 
@@ -732,6 +790,7 @@ def _audit(report: Report, status: dict | None, diffs: list[dict]) -> dict:
                 "key": key,
                 "label": label,
                 "recorded": step is not None,
+                "started_at": (step or {}).get("started_at") or "",
                 "summary": "" if summary in thoughts else summary,
                 "lines": [line for line in (step or {}).get("lines") or [] if line not in thoughts],
             }
@@ -750,6 +809,7 @@ def _audit(report: Report, status: dict | None, diffs: list[dict]) -> dict:
                 "target": name or "Not recorded",
                 "ok": bool(entry.get("ok", True)),
                 "bytes": entry.get("result_bytes"),
+                "at": str(entry.get("at") or ""),
             }
         )
     fixture = report.test_environment.fixture or report.production_environment.fixture

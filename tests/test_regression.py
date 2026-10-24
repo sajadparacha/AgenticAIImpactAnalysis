@@ -665,3 +665,195 @@ def test_grant_read_falls_back_to_all_tab_privs_when_dba_view_is_denied():
     fetch = gateway.fetch_grants("APP", "PKG_DEMO")
     assert fetch.complete is False and fetch.grants == [("BILLING_APP", "EXECUTE")]
     assert any("all_tab_privs" in sql for sql in executed)
+
+
+# Decision support: compilation, drift classification, coverage, readiness, history.
+
+_THRESHOLD_PROD = "PACKAGE BODY pkg_demo AS PROCEDURE run(p_id IN NUMBER) IS BEGIN IF p_limit > 100 THEN NULL; END IF; END; END;\n"
+_THRESHOLD_TEST = "PACKAGE BODY pkg_demo AS PROCEDURE run(p_id IN NUMBER) IS BEGIN IF p_limit > 500 THEN NULL; END IF; END; END;\n"
+
+
+def _demo(tmp_path, package_name: str):
+    from oracle_impact.fixtures.demo_catalog import build_demo_catalogs
+
+    test_catalog, prod_catalog = build_demo_catalogs()
+    return run_catalogs(tmp_path, [package_name], test_catalog, prod_catalog)
+
+
+def _readiness(report, validations=(), reviews=(), baselines=(), manifest=(), superseded=None, stale=None):
+    from oracle_impact.services.change_classification import classify_changes
+    from oracle_impact.services.readiness import evaluate_readiness, policy_for
+
+    classification = classify_changes(report, list(baselines), list(manifest), 30)
+    policy, _ = policy_for(report)
+    return evaluate_readiness(report, policy, list(validations), list(reviews), classification["drift_objects"], superseded, stale)
+
+
+def _baseline(report, environment: str, object_type: str, sha256: str, set_at: str | None = None) -> dict:
+    from datetime import datetime, timezone
+
+    return {
+        "id": f"B-{environment}-{object_type}",
+        "status": "active",
+        "environment": environment,
+        "owner": report.object_states[0].owner,
+        "name": report.object_states[0].name,
+        "object_type": object_type,
+        "sha256": sha256,
+        "set_at": set_at or datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _test_hash(report, object_type: str) -> str:
+    state = next(item for item in report.object_states if item.object_type == object_type)
+    return state.in_environment("test").sha256
+
+
+def test_dependent_that_does_not_compile_in_test_blocks_deployment(tmp_path):
+    report = _demo(tmp_path, "DEMO.PKG_BILLING")
+    finding = next(item for item in report.findings if item.rule_id == "CMP-DEPENDENT")
+    assert finding.status.value == "confirmed" and finding.object_name == "PKG_LEGACY"
+    assert finding.fingerprint.startswith("FP-") and finding.severity_rationale
+    assert "PLS-00306" in finding.evidence
+    assert any(item.rule_id == "BLK-COMPILE-FAILURE" and item.finding_id == finding.id for item in report.policy.blockers)
+    assert report.compilation.evaluated and report.compilation.errors[0].line == 4
+    assert report.recommendation == Recommendation.NOT_RECOMMENDED
+    assert _readiness(report)["decision"] == "on_hold"
+
+
+def test_compile_failure_cannot_be_cleared_by_a_passed_validation(tmp_path):
+    report = _demo(tmp_path, "DEMO.PKG_BILLING")
+    blocker = next(item for item in report.policy.blockers if item.rule_id == "BLK-COMPILE-FAILURE")
+    passed = [{"id": "V1", "finding_id": blocker.finding_id, "status": "passed"}]
+    accepted = [{"finding_id": blocker.finding_id, "decision": "accepted"}]
+    entry = next(item for item in _readiness(report, passed, accepted)["blockers"] if item["item"].finding_id == blocker.finding_id)
+    assert entry["state"] == "unresolved"
+
+
+def test_dependency_edges_keep_dictionary_and_source_scan_provenance(tmp_path):
+    report = _demo(tmp_path, "DEMO.PKG_BILLING")
+    provenance = {edge.provenance for edge in report.dependency_edges}
+    assert {"dictionary", "source_scan"} <= provenance
+    assert all(edge.provenance in {"dictionary", "source_scan", "unresolved"} for edge in report.dependency_edges)
+
+
+def test_positive_readiness_comes_from_policy_and_recorded_validation(tmp_path):
+    test_catalog, prod_catalog = _pair(_THRESHOLD_PROD, _THRESHOLD_TEST)
+    report = run_catalogs(tmp_path, ["APP.PKG_DEMO"], test_catalog, prod_catalog)
+    assert not report.policy.blockers and report.policy.validations
+    before = _readiness(report)
+    assert before["decision"] == "on_hold" and before["open_validations"] == len(report.policy.validations)
+    passed = [
+        {"id": f"V{index}", "finding_id": item.finding_id, "status": "passed", "evidence": "TEST run 42"}
+        for index, item in enumerate(report.policy.validations)
+    ]
+    after = _readiness(report, passed)
+    assert after["decision"] == "recommended" and after["label"] == "Deployment recommended"
+    assert "Human approval is still required" in after["summary"]
+    failed = passed[:1] + [{**passed[0], "status": "failed"}]
+    assert _readiness(report, failed)["decision"] == "on_hold"
+
+
+def test_partial_coverage_makes_readiness_indeterminate(tmp_path):
+    report = _demo(tmp_path, "DEMO.PKG_STATUS")
+    assert report.coverage.analyzed == report.coverage.in_scope == 2
+    assert _readiness(report)["decision"] == "recommended"
+    report.coverage.inaccessible = 1
+    result = _readiness(report)
+    assert result["decision"] == "indeterminate"
+    assert any("could not be read" in reason for reason in result["indeterminate_reasons"])
+
+
+def test_report_without_coverage_or_newer_run_is_indeterminate(tmp_path):
+    from oracle_impact.models.report import Report
+
+    report = _demo(tmp_path, "DEMO.PKG_STATUS")
+    legacy = report.model_dump(mode="json")
+    for key in ("coverage", "policy", "object_states", "comparisons", "compilation", "report_version"):
+        legacy.pop(key, None)
+    old = Report.model_validate(legacy)
+    assert old.coverage is None and _readiness(old)["decision"] == "indeterminate"
+    assert _readiness(report, superseded="newer-run")["decision"] == "indeterminate"
+    assert _readiness(report, stale="The snapshot is older than 24 hours.")["decision"] == "indeterminate"
+
+
+def test_production_change_against_trusted_baseline_is_unexpected_drift(tmp_path):
+    from oracle_impact.services.change_classification import classify_changes
+
+    report = _demo(tmp_path, "DEMO.PKG_STATUS")
+    baselines = [_baseline(report, "production", "PACKAGE BODY", "0" * 64)]
+    result = classify_changes(report, baselines, [], 30)
+    body = next(item for item in result["objects"] if item["object_type"] == "PACKAGE BODY")
+    assert body["classification"] == "unexpected_drift" and body["production_only"]
+    assert result["counts"]["unexpected_drift"] == 1 and result["production_only"] == 1
+    assert result["baseline_state"] == "partial"
+    readiness = _readiness(report, baselines=baselines)
+    assert readiness["decision"] == "on_hold" and readiness["open_drift"] == 1
+
+
+def test_manifest_pinned_test_checksum_is_planned_and_mismatch_is_drift(tmp_path):
+    from oracle_impact.services.change_classification import classify_changes
+
+    report = _demo(tmp_path, "DEMO.PKG_STATUS")
+    common = {"status": "approved", "owner": "DEMO", "name": "PKG_STATUS", "change_ref": "CHG-1"}
+    pinned = [{**common, "object_type": "PACKAGE BODY", "sha256": _test_hash(report, "PACKAGE BODY")}]
+    planned = classify_changes(report, [], pinned, 30)
+    body = next(item for item in planned["objects"] if item["object_type"] == "PACKAGE BODY")
+    spec = next(item for item in planned["objects"] if item["object_type"] == "PACKAGE")
+    assert body["classification"] == "planned" and "CHG-1" in body["reasons"][0]
+    assert spec["classification"] == "unclassified"
+    stale_pin = [{**common, "object_type": "PACKAGE BODY", "sha256": "f" * 64}]
+    drift = classify_changes(report, [], stale_pin, 30)
+    assert next(item for item in drift["objects"] if item["object_type"] == "PACKAGE BODY")["classification"] == "unexpected_drift"
+
+
+def test_missing_and_outdated_baselines_are_reported_not_hidden(tmp_path):
+    from oracle_impact.services.change_classification import classify_changes
+
+    report = _demo(tmp_path, "DEMO.PKG_STATUS")
+    none = classify_changes(report, [], [], 30)
+    assert none["baseline_state"] == "unavailable" and none["counts"]["unexpected_drift"] == 0
+    assert none["counts"]["unclassified"] == 2
+    old = [
+        _baseline(report, "production", kind, next(s for s in report.object_states if s.object_type == kind).in_environment("production").sha256, "2020-01-01T00:00:00+00:00")
+        for kind in ("PACKAGE", "PACKAGE BODY")
+    ]
+    outdated = classify_changes(report, old, [], 30)
+    assert outdated["baseline_state"] == "outdated" and outdated["counts"]["unexpected_drift"] == 0
+
+
+def test_fingerprints_are_stable_and_run_comparison_tracks_resolution(tmp_path):
+    from oracle_impact.services.history import compare_runs
+
+    first = _demo(tmp_path / "a", "DEMO.PKG_BILLING")
+    second = _demo(tmp_path / "b", "DEMO.PKG_BILLING")
+    assert first.run_id != second.run_id
+    assert sorted(item.fingerprint for item in first.findings) == sorted(item.fingerprint for item in second.findings)
+    same = compare_runs(second, first)
+    assert not same["new"] and not same["resolved"] and len(same["unchanged"]) == len(first.findings)
+
+    status = _demo(tmp_path / "c", "DEMO.PKG_STATUS")
+    changed = compare_runs(status, first)
+    assert changed["resolved"] and changed["blockers_resolved"] and not changed["blockers_new"]
+
+
+def test_investigator_failure_keeps_deterministic_findings(tmp_path):
+    class Broken:
+        def with_model(self, model):
+            return self
+
+        def available_models(self):
+            return ["mock"]
+
+        def investigate(self, *args, **kwargs):
+            raise RuntimeError("model endpoint unavailable")
+
+    from oracle_impact.fixtures.demo_catalog import build_demo_catalogs
+
+    test_catalog, prod_catalog = build_demo_catalogs()
+    report = run_catalogs(tmp_path, ["DEMO.PKG_BILLING"], test_catalog, prod_catalog, llm_egress_enabled=True, llm_model="mock", investigator=Broken())
+    assert report.status == "completed"
+    assert report.recommendation == Recommendation.NOT_RECOMMENDED
+    assert {item.rule_id for item in report.policy.blockers} >= {"BLK-INTERFACE-BREAK", "BLK-COMPILE-FAILURE"}
+    assert any("investigator failed" in item.lower() for item in report.limitations)
+    assert not [item for item in report.findings if item.origin == "investigator"]

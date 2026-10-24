@@ -9,20 +9,51 @@ from oracle_impact.models.enums import Recommendation
 from oracle_impact.models.report import Report
 
 
-def render_pdf(report: Report, html: str | None = None) -> bytes:
+def render_pdf(report: Report, html: str | None = None, view: dict | None = None) -> bytes:
     try:
         from weasyprint import HTML
     except Exception:
-        return _render_fpdf(report)
+        return _render_fpdf(report, view)
     try:
         if html:
             return HTML(string=html).write_pdf()
     except Exception:
-        return _render_fpdf(report)
-    return _render_fpdf(report)
+        return _render_fpdf(report, view)
+    return _render_fpdf(report, view)
 
 
-def _render_fpdf(report: Report) -> bytes:
+def _readiness(pdf, view: dict) -> None:
+    decision = view.get("decision") or {}
+    readiness = decision.get("readiness")
+    if not readiness:
+        return
+    _write(pdf, "Deployment readiness", 13, "B", 8)
+    _write(pdf, readiness["label"], 12, "B", 7)
+    _write(pdf, readiness["summary"], 10, "", 5)
+    for reason in readiness.get("indeterminate_reasons") or []:
+        _write(pdf, f"- {reason}", 10, "", 5)
+    for state in decision.get("states") or []:
+        _write(pdf, f"{state['label']}: {state['value']}. {state['note']}", 10, "", 5)
+    rows = decision.get("hold_rows") or []
+    if rows:
+        _write(pdf, "Why deployment is on hold", 11, "B", 6)
+        for row in rows:
+            label = " ".join(part for part in (row["rule_id"], row["finding_id"], row["object"]) if part)
+            _write(pdf, f"- {label}: {row['title']}. {row['state_label']}: {row['state_reason']} {row['action']}", 10, "", 5)
+    coverage = view.get("coverage") or {}
+    if coverage.get("recorded"):
+        _write(pdf, f"Coverage: {coverage['analyzed']} of {coverage['in_scope']} in-scope objects analyzed.", 10, "", 5)
+    compilation = view.get("compilation") or {}
+    if compilation.get("recorded"):
+        if not compilation["evaluated"]:
+            _write(pdf, "Compilation readiness: not evaluated. " + compilation["reason"], 10, "", 5)
+        else:
+            invalid = ", ".join(f"{item['owner']}.{item['name']} {item['object_type']} ({item['environment_label']})" for item in compilation["invalid"])
+            _write(pdf, f"Compilation readiness: {compilation['checked']} object(s) checked. Invalid: {invalid or 'none'}.", 10, "", 5)
+    pdf.ln(2)
+
+
+def _render_fpdf(report: Report, view: dict | None = None) -> bytes:
     from fpdf import FPDF
 
     pdf = FPDF(format="A4")
@@ -39,6 +70,7 @@ def _render_fpdf(report: Report) -> bytes:
     )
     _write(pdf, f"Analyzer: {report.analyzer}")
     pdf.ln(2)
+    _readiness(pdf, view or {})
     _write(pdf, "Deployment recommendation", 13, "B", 8)
     _write(pdf, report.recommendation_label, 12, "B", 7)
     severities = {finding.id: finding.severity.value for finding in report.findings}

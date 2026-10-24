@@ -3,17 +3,28 @@
 import logging
 from uuid import uuid4
 
+from oracle_impact.analysis.annotate import annotate
+from oracle_impact.analysis.compilation import collect_compilation, compilation_findings
+from oracle_impact.analysis.coverage import build_coverage, edge_records
 from oracle_impact.analysis.dependencies import discover_dependencies
 from oracle_impact.analysis.diff_engine import build_object_diff
 from oracle_impact.analysis.grants import compare_grants
 from oracle_impact.analysis.impacts import build_deterministic_findings
 from oracle_impact.analysis.plsql_scanner import scan_package
 from oracle_impact.analysis.signatures import compare_package_signatures
+from oracle_impact.analysis.transactions import build_profiles, modified_statements, performance_assessment
 from oracle_impact.config import Settings
 from oracle_impact.infrastructure.llm.investigator import build_case_file
 from oracle_impact.infrastructure.llm.tools import ToolContext
-from oracle_impact.infrastructure.oracle.gateway import OracleAccessError
+from oracle_impact.infrastructure.oracle.gateway import OracleAccessError, utc_now
 from oracle_impact.infrastructure.storage.run_store import RunStore
+from oracle_impact.models.assessment import (
+    Comparison,
+    CompilationSummary,
+    EnvironmentObject,
+    ExternalCheck,
+    ObjectState,
+)
 from oracle_impact.models.domain import CapturedObject, PackageRef, Snapshot
 from oracle_impact.models.enums import Severity
 from oracle_impact.models.report import (
@@ -23,10 +34,16 @@ from oracle_impact.models.report import (
     Report,
     ReportStatistics,
 )
+from oracle_impact.services.readiness import DEFAULT_RULES, evaluate_policy
 from oracle_impact.services.recommendation import decide, label_for
 from oracle_impact.services.snapshot_service import SnapshotService
 
 logger = logging.getLogger(__name__)
+REPORT_VERSION = "1.1"
+APPLICATION_SOURCE_NOT_CONFIGURED = (
+    "No application source index is configured, so callers in application code (for example Java, .NET, "
+    "reports, or scripts kept in TFS) were not searched. Database callers come from ALL_DEPENDENCIES only."
+)
 
 
 class UnknownModel(ValueError):
@@ -34,13 +51,32 @@ class UnknownModel(ValueError):
 
 
 class AnalysisService:
-    def __init__(self, settings: Settings, store: RunStore, test_gateway, production_gateway, investigator=None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        store: RunStore,
+        test_gateway,
+        production_gateway,
+        investigator=None,
+        autumn_gateway=None,
+        registry=None,
+        rules=DEFAULT_RULES,
+    ) -> None:
         self.settings = settings
         self.store = store
         self.test_gateway = test_gateway
         self.production_gateway = production_gateway
+        self.autumn_gateway = autumn_gateway
         self.investigator = investigator
-        self.snapshots = SnapshotService(test_gateway, production_gateway)
+        self.registry = registry
+        self.rules = rules
+        self.snapshots = SnapshotService(test_gateway, production_gateway, autumn_gateway)
+
+    def labels(self) -> dict[str, str]:
+        labels = {"test": self.settings.test_oracle_label, "production": self.settings.prod_oracle_label}
+        if self.autumn_gateway is not None:
+            labels["autumn"] = getattr(self.autumn_gateway, "label", self.settings.autumn_oracle_label)
+        return labels
 
     def available_models(self) -> list[str]:
         """Models the investigator endpoint serves, with the configured default first."""
@@ -85,8 +121,10 @@ class AnalysisService:
             )
 
             self._progress(run_id, "comparing", "Comparing specifications and bodies.")
-            diffs = self._diffs(snapshot, packages)
-            scans = self._scans(snapshot, packages)
+            failures: dict[tuple[str, str, str], str] = {}
+            diffs = self._diffs(snapshot, packages, failures)
+            scans = self._scans(snapshot, packages, failures)
+            comparisons = self._comparisons(snapshot, packages)
             self._progress(run_id, "comparing", "Code comparison finished.", _diff_lines(diffs))
 
             self._progress(
@@ -115,7 +153,14 @@ class AnalysisService:
                 "referenced_by",
                 self.settings.max_dependency_depth,
             )
+            test_in = discover_dependencies(
+                self.test_gateway,
+                [(package.owner, package.name, "PACKAGE") for package in packages],
+                "referenced_by",
+                1,
+            )
             signature_changes = []
+            argument_gaps: set[tuple[str, str]] = set()
             for package in packages:
                 callers = sorted(
                     {
@@ -126,6 +171,8 @@ class AnalysisService:
                 )
                 test_args = self.test_gateway.fetch_arguments(package.owner, package.name)
                 prod_args = self.production_gateway.fetch_arguments(package.owner, package.name)
+                if test_args.inaccessible or prod_args.inaccessible:
+                    argument_gaps.add((package.owner, package.name))
                 signature_changes.extend(
                     compare_package_signatures(
                         package,
@@ -155,7 +202,7 @@ class AnalysisService:
             drift = [
                 f"{item.environment} {item.owner}.{item.name} {item.object_type}"
                 for item in snapshot.objects
-                if item.drift
+                if item.drift and item.environment in {"test", "production"}
             ]
             tables = self._tables(test_out, prod_out)
             findings = build_deterministic_findings(
@@ -170,6 +217,9 @@ class AnalysisService:
                 drift,
                 grant_changes,
             )
+            compilation = self._compilation(packages, prod_in, test_in)
+            findings.extend(compilation_findings(run_id, compilation, self.labels()))
+            annotate(findings)
 
             self._progress(
                 run_id,
@@ -198,15 +248,19 @@ class AnalysisService:
                         activity={"kind": kind, "text": message},
                     )
 
-                extra, tool_log, ai_limitations = investigator.investigate(
-                    snapshot,
-                    context,
-                    [finding.explanation for finding in findings],
-                    on_progress=on_progress,
-                    case_file=case_file,
-                    requires_tools=requires_tools,
-                    anchors=findings,
-                )
+                try:
+                    extra, tool_log, ai_limitations = investigator.investigate(
+                        snapshot,
+                        context,
+                        [finding.explanation for finding in findings],
+                        on_progress=on_progress,
+                        case_file=case_file,
+                        requires_tools=requires_tools,
+                        anchors=findings,
+                    )
+                except Exception:
+                    logger.warning("investigator failed run_id=%s", run_id)
+                    extra, ai_limitations = [], ["The investigator failed. Deterministic findings were kept."]
                 findings.extend(extra)
                 limitations.extend(ai_limitations)
                 ai_used = True
@@ -234,6 +288,7 @@ class AnalysisService:
 
             apply_test_snippets(findings, snapshot)
             recommendation, reasons, actions = decide(findings)
+            policy = evaluate_policy(findings, self.rules)
             self._progress(
                 run_id,
                 "validating",
@@ -254,7 +309,41 @@ class AnalysisService:
                 model_name,
                 tool_log,
             )
+            selected_pairs = [(package.owner, package.name) for package in packages]
+            all_edges = list(prod_in.edges) + list(test_in.edges) + list(test_out.edges) + list(prod_out.edges)
+            edges = edge_records(all_edges, selected_pairs, scans)
+            report.report_version = REPORT_VERSION
+            report.environments = self._environment_infos(snapshot)
+            report.object_states = _object_states(snapshot, selected_pairs, diffs, compilation, self.labels())
+            report.comparisons = comparisons
+            report.compilation = compilation
+            report.dependency_edges = edges
+            report.coverage = build_coverage(
+                selected_pairs,
+                snapshot,
+                [env for env in self.snapshots.environments if any(item.environment == env for item in snapshot.objects)],
+                failures,
+                argument_gaps,
+                [*prod_out.gaps, *test_out.gaps, *prod_in.gaps, *test_in.gaps],
+                edges,
+                scans,
+                _changed_test_lines(diffs),
+                prod_out.skipped_system_objects + test_out.skipped_system_objects + prod_in.skipped_system_objects,
+                self.settings.max_dependency_depth,
+                utc_now(),
+            )
+            report.transaction_profiles = build_profiles(selected_pairs, scans, diffs, findings)
+            report.performance = performance_assessment(
+                modified_statements(selected_pairs, scans, diffs), self.settings.performance_plan_source
+            )
+            report.policy = policy
+            report.external_checks = [
+                ExternalCheck(name="Application source impact", evaluated=False, reason=APPLICATION_SOURCE_NOT_CONFIGURED)
+            ]
+            if compilation.reason:
+                report.limitations.append(compilation.reason)
             self.store.write_model(run_id, "report.json", report)
+            self._record_versions(run_id, snapshot)
             self.store.write_json(run_id, "findings.json", [item.model_dump(mode="json") for item in findings])
             self.store.write_json(run_id, "tool_log.json", tool_log)
             self._progress(run_id, "completed", "Report ready.", [label_for(recommendation)])
@@ -283,14 +372,14 @@ class AnalysisService:
     ) -> None:
         self.store.write_status(run_id, status, detail=detail, lines=lines, activity=activity)
 
-    def _diffs(self, snapshot: Snapshot, packages: list[PackageRef]):
+    def _diffs(self, snapshot: Snapshot, packages: list[PackageRef], failures: dict, source_env: str = "test", target_env: str = "production"):
         diffs = []
         for package in packages:
             for object_type in ("PACKAGE", "PACKAGE BODY"):
-                test = snapshot.find("test", package.owner, package.name, object_type)
-                prod = snapshot.find("production", package.owner, package.name, object_type)
-                diffs.append(
-                    build_object_diff(
+                test = snapshot.find(source_env, package.owner, package.name, object_type)
+                prod = snapshot.find(target_env, package.owner, package.name, object_type)
+                try:
+                    diff = build_object_diff(
                         package.owner,
                         package.name,
                         object_type,
@@ -299,16 +388,108 @@ class AnalysisService:
                         None if test is None else test.sha256,
                         None if prod is None else prod.sha256,
                     )
-                )
+                except Exception:
+                    logger.warning("source comparison failed object=%s.%s type=%s", package.owner, package.name, object_type)
+                    failures[(package.owner, package.name, object_type)] = "The source comparison failed for this object."
+                    continue
+                diffs.append(diff)
         return diffs
 
-    def _scans(self, snapshot: Snapshot, packages: list[PackageRef]):
+    def _scans(self, snapshot: Snapshot, packages: list[PackageRef], failures: dict):
         scans = {}
         for package in packages:
-            for environment in ("test", "production"):
-                source = snapshot.text(environment, package.owner, package.name, "PACKAGE BODY")
-                scans[(environment, package.owner, package.name)] = scan_package(source)
+            scanned = {}
+            try:
+                for environment in ("test", "production"):
+                    source = snapshot.text(environment, package.owner, package.name, "PACKAGE BODY")
+                    scanned[(environment, package.owner, package.name)] = scan_package(source)
+            except Exception:
+                logger.warning("PL/SQL scan failed object=%s.%s", package.owner, package.name)
+                failures[(package.owner, package.name, "PACKAGE BODY")] = (
+                    "The PL/SQL scanner failed, so body checks did not run for this object."
+                )
+                continue
+            scans.update(scanned)
         return scans
+
+    def _comparisons(self, snapshot: Snapshot, packages: list[PackageRef]) -> list[Comparison]:
+        if not any(item.environment == "autumn" for item in snapshot.objects):
+            return []
+        labels = self.labels()
+        comparisons = []
+        for source, target in (("test", "autumn"), ("autumn", "production")):
+            comparisons.append(
+                Comparison(
+                    key=f"{source}:{target}",
+                    source_environment=source,
+                    target_environment=target,
+                    source_label=labels[source],
+                    target_label=labels[target],
+                    diffs=self._diffs(snapshot, packages, {}, source, target),
+                )
+            )
+        return comparisons
+
+    def _compilation(self, packages: list[PackageRef], prod_in, test_in) -> CompilationSummary:
+        gateways = {"test": self.test_gateway, "production": self.production_gateway}
+        if self.autumn_gateway is not None:
+            gateways["autumn"] = self.autumn_gateway
+        callers = sorted(
+            {
+                (edge.owner, edge.name)
+                for edge in list(prod_in.edges) + list(test_in.edges)
+                if edge.depth == 1 and edge.direction == "referenced_by"
+            }
+        )
+        try:
+            return collect_compilation(
+                gateways,
+                [(package.owner, package.name) for package in packages],
+                {environment: callers for environment in gateways},
+            )
+        except OracleAccessError:
+            return CompilationSummary(evaluated=False, reason="Object validity was not evaluated because the dictionary could not be read.")
+
+    def _environment_infos(self, snapshot: Snapshot) -> list[EnvironmentInfo]:
+        labels = self.labels()
+        roles = {"test": "source", "autumn": "staging", "production": "baseline"}
+        infos = []
+        for environment in ("test", "autumn", "production"):
+            item = next((obj for obj in snapshot.objects if obj.environment == environment), None)
+            if item is None:
+                continue
+            infos.append(
+                EnvironmentInfo(
+                    role=roles[environment],
+                    label=labels.get(environment, environment.upper()),
+                    database_id=item.database_id,
+                    fixture=self.settings.fixture_mode,
+                )
+            )
+        return infos
+
+    def _record_versions(self, run_id: str, snapshot: Snapshot) -> None:
+        if self.registry is None:
+            return
+        try:
+            self.registry.record_versions(
+                run_id,
+                [
+                    {
+                        "environment": item.environment,
+                        "owner": item.owner,
+                        "name": item.name,
+                        "object_type": item.object_type,
+                        "sha256": item.sha256 if item.found else None,
+                        "found": item.found,
+                        "captured_at": item.retrieved_at or snapshot.captured_at,
+                    }
+                    for item in snapshot.objects
+                    if not item.inaccessible and f"{item.owner}.{item.name}" in snapshot.packages
+                ],
+            )
+        except OSError:
+            logger.warning("object version history could not be written run_id=%s", run_id)
 
     def _load_table(self, environment: str, owner: str, table: str, cache: dict):
         gateway = self.test_gateway if environment == "test" else self.production_gateway
@@ -506,6 +687,84 @@ class AnalysisService:
                         )
                     )
             captured += 1
+
+
+def _changed_test_lines(diffs) -> dict[tuple[str, str], set[int]]:
+    changed: dict[tuple[str, str], set[int]] = {}
+    for diff in diffs:
+        if diff.object_type != "PACKAGE BODY":
+            continue
+        lines = changed.setdefault((diff.owner, diff.name), set())
+        lines.update(row.test_line_no for row in diff.rows if row.test_kind == "added" and row.test_line_no)
+    return changed
+
+
+def _change_type(test, prod, diff) -> str:
+    if (test is not None and test.inaccessible) or (prod is not None and prod.inaccessible):
+        return "unknown"
+    test_found = test is not None and test.found
+    prod_found = prod is not None and prod.found
+    if test_found and not prod_found:
+        return "created"
+    if prod_found and not test_found:
+        return "deleted"
+    if not test_found and not prod_found:
+        return "absent"
+    if diff is not None and diff.unchanged:
+        return "unchanged"
+    if diff is not None and diff.formatting_only:
+        return "formatting"
+    if diff is None and test.sha256 == prod.sha256:
+        return "unchanged"
+    return "modified"
+
+
+def _object_states(snapshot: Snapshot, packages, diffs, compilation: CompilationSummary, labels: dict[str, str]) -> list[ObjectState]:
+    status = {
+        (item.environment, item.owner, item.name, item.object_type): item
+        for item in compilation.objects
+        if item.role == "in_scope"
+    }
+    states = []
+    for owner, name in packages:
+        for object_type in ("PACKAGE", "PACKAGE BODY"):
+            environments = []
+            for environment in ("test", "autumn", "production"):
+                item = snapshot.find(environment, owner, name, object_type)
+                if item is None:
+                    continue
+                compiled = status.get((environment, owner, name, object_type))
+                environments.append(
+                    EnvironmentObject(
+                        environment=environment,
+                        label=labels.get(environment, environment.upper()),
+                        found=item.found,
+                        inaccessible=item.inaccessible,
+                        sha256=item.sha256 if item.found else None,
+                        captured_at=item.retrieved_at,
+                        capture_drift=item.drift,
+                        compile_status=compiled.status if compiled else None,
+                        last_ddl_time=compiled.last_ddl_time if compiled else None,
+                    )
+                )
+            diff = next(
+                (item for item in diffs if item.owner == owner and item.name == name and item.object_type == object_type),
+                None,
+            )
+            states.append(
+                ObjectState(
+                    owner=owner,
+                    name=name,
+                    object_type=object_type,
+                    change_type=_change_type(
+                        snapshot.find("test", owner, name, object_type),
+                        snapshot.find("production", owner, name, object_type),
+                        diff,
+                    ),
+                    environments=environments,
+                )
+            )
+    return states
 
 
 def _snapshot_lines(snapshot: Snapshot) -> list[str]:

@@ -16,6 +16,7 @@ DICTIONARY_VIEWS = (
     "all_constraints",
     "all_cons_columns",
     "all_triggers",
+    "all_errors",
 )
 
 
@@ -37,6 +38,20 @@ FROM all_objects
 WHERE owner = :owner
   AND object_name = :name
   AND object_type = :object_type
+""",
+    "object_validity": """
+SELECT object_type, status, TO_CHAR(last_ddl_time, 'YYYY-MM-DD"T"HH24:MI:SS')
+FROM all_objects
+WHERE owner = :owner
+  AND object_name = :name
+ORDER BY object_type
+""",
+    "compile_errors": """
+SELECT type, line, position, text, attribute
+FROM all_errors
+WHERE owner = :owner
+  AND name = :name
+ORDER BY type, sequence
 """,
     "source": """
 SELECT line, text

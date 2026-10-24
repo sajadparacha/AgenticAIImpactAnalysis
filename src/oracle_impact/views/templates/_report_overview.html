@@ -4,6 +4,61 @@
   <div class="overview-grid">
     <div class="overview-main">
 
+      <section class="card" aria-labelledby="hold-title">
+        <div class="card-head">
+          <h3 id="hold-title">{% if ready.decision == 'recommended' %}Nothing is holding deployment{% elif ready.decision == 'indeterminate' %}Why the analyzer cannot decide{% else %}Why deployment is on hold{% endif %} {% if d.hold_rows %}<span class="count-chip">{{ d.hold_rows | length }}</span>{% endif %}</h3>
+          {{ ui.kind('policy') }}
+        </div>
+        {% if d.hold_rows %}
+        <div class="table-scroll">
+          <table class="data-table compact hold-table">
+            <thead><tr><th scope="col">Finding</th><th scope="col">Object</th><th scope="col">Severity</th><th scope="col">Evidence</th><th scope="col">Status</th><th scope="col">Action</th></tr></thead>
+            <tbody>
+              {% for item in d.hold_rows %}
+              <tr class="hold-{{ item.kind }}">
+                <td>
+                  <span class="row-title">{{ item.title }}</span>
+                  <span class="row-meta">{% if item.finding_id %}<a href="{{ ui.finding_href(view, item.finding_id) }}" data-open-finding="{{ item.finding_id }}">{{ item.finding_id }}</a> · {% endif %}{{ item.rule_id }} · {{ {'blocker': 'Blocks deployment', 'validation': 'Requires validation', 'drift': 'Drift'}[item.kind] }}</span>
+                  <span class="row-meta">{{ item.headline }}</span>
+                </td>
+                <td>{% if item.object %}<code class="obj">{{ item.object }}</code><span class="row-meta">{{ item.object_type | lower }}</span>{% else %}<span class="hint">Not identified</span>{% endif %}</td>
+                <td>{% if item.level %}{{ ui.sev(item.level, item.level_label) }}{% else %}<span class="hint">Not rated</span>{% endif %}</td>
+                <td>{% if item.evidence_status %}{{ ui.evidence(item.evidence_status, item.evidence_label) }}{% endif %}</td>
+                <td>{{ ui.tag(item.state_label, 'warning' if item.state == 'awaiting_review' else 'danger') }}{% if item.state_reason %}<span class="row-meta">{{ item.state_reason }}</span>{% endif %}</td>
+                <td>{{ item.action }}<span class="row-meta">{{ item.resolution }}</span></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% elif ready.decision == 'indeterminate' %}
+        <p>The reasons are listed in the banner above. No finding-level result is trustworthy until they are resolved.</p>
+        {% else %}
+        <p class="empty">No unresolved blocker, required validation, or unexpected drift under policy {{ d.policy_version }}. {% if view.approval.latest %}The latest human decision is {{ view.approval.labels[view.approval.latest.decision] }}.{% else %}A person still has to record the deployment decision.{% endif %}</p>
+        {% endif %}
+      </section>
+
+      <section class="card" aria-labelledby="next-actions">
+        <div class="card-head"><h3 id="next-actions">Next actions</h3></div>
+        {% if d.next_actions %}
+        <ol class="action-list">
+          {% for action in d.next_actions %}
+          <li>{{ action.text }}{% if not print_mode %} <a href="{{ view.base_url }}?tab={{ action.tab }}" data-goto-tab="{{ action.tab }}" class="hint">Go</a>{% endif %}</li>
+          {% endfor %}
+        </ol>
+        {% else %}
+        <p class="empty">No action is outstanding.</p>
+        {% endif %}
+        {% if not print_mode %}
+        <ul class="entry-points">
+          <li><a href="{{ view.base_url }}?tab=findings" data-goto-tab="findings">Explore findings</a></li>
+          <li><a href="{{ view.base_url }}?tab=objects" data-goto-tab="objects">Changed objects and drift</a></li>
+          <li><a href="{{ view.base_url }}?tab=source" data-goto-tab="source">Source comparison</a></li>
+          <li><a href="{{ view.base_url }}?tab=validation" data-goto-tab="validation">Record validation and approval</a></li>
+        </ul>
+        {% endif %}
+      </section>
+
       <section class="card support-only" aria-labelledby="support-summary">
         <h3 id="support-summary">Plain-language risk summary</h3>
         {% set serious = m.severity | selectattr('level', 'in', ['critical', 'high']) | map(attribute='count') | sum %}
@@ -13,7 +68,8 @@
           {% else %}
           The analyzer recorded no findings.
           {% endif %}
-          Its recommendation is <strong>{{ rec.label | lower }}</strong>. No one has approved or rejected this change in this application.
+          Readiness is <strong>{{ ready.label | lower }}</strong>.
+          {% if view.human_decision.state == 'not_recorded' %}No one has approved or rejected this change in this application.{% else %}Recorded human decision: <strong>{{ view.human_decision.label | lower }}</strong>.{% endif %}
         </p>
         {% if view.top_findings %}
         <h4>What could go wrong</h4>
@@ -27,11 +83,41 @@
         </ul>
         {% endif %}
         <dl class="facts">
-          <div><dt>Affected applications and business processes</dt><dd>Business impact not mapped. This report has no mapping from packages to applications or business processes.</dd></div>
+          <div><dt>Affected applications and business processes</dt><dd>{% if view.business.established %}{{ view.business.rows | length }} mapped process{{ 'es' if view.business.rows | length != 1 }} listed under Business process impact.{% else %}Business impact not established. No maintained mapping covers the analyzed objects.{% endif %}</dd></div>
+          <div><dt>Support teams</dt><dd>{% set teams = view.business.rows | map(attribute='mapping') | map(attribute='support_team') | select | unique | list %}{{ teams | join(', ') if teams else 'Not recorded in the business mappings.' }}</dd></div>
           <div><dt>Monitoring and rollback</dt><dd>Not recorded by the analyzer.</dd></div>
-          <div><dt>Escalation contacts</dt><dd>Not recorded by the analyzer.</dd></div>
-          <div><dt>Readiness</dt><dd>Analyzer: {{ rec.label }}. Human decision: {{ view.human_decision.label | lower }}. Test results: not recorded.</dd></div>
+          <div><dt>Readiness</dt><dd>{{ ready.label }}. Analyzer: {{ rec.label }}. Human decision: {{ view.human_decision.label | lower }}. Validation results recorded: {{ view.review.validations | length }}.</dd></div>
         </dl>
+      </section>
+
+      <section class="card" aria-labelledby="business-impact">
+        <div class="card-head">
+          <h3 id="business-impact">Business process impact</h3>
+          {% if not print_mode %}<a href="/mappings">Maintain mappings →</a>{% endif %}
+        </div>
+        {% set b = view.business %}
+        {% if b.rows %}
+        <div class="table-scroll">
+          <table class="data-table compact">
+            <thead><tr><th scope="col">Process</th><th scope="col">Object</th><th scope="col">Impact</th><th scope="col">Criticality</th><th scope="col">Owner · support</th></tr></thead>
+            <tbody>
+              {% for row in b.rows %}
+              <tr>
+                <td><span class="row-title">{{ row.mapping.business_process }}</span><span class="row-meta">{{ row.mapping.application }}</span></td>
+                <td><code class="obj">{{ row.qualified }}</code></td>
+                <td>{{ ui.tag(row.label, row.tone) }}<span class="row-meta">{{ row.basis }}</span></td>
+                <td>{{ row.mapping.criticality | capitalize }}</td>
+                <td>{{ row.mapping.business_owner or 'Not recorded' }}<span class="row-meta">{{ row.mapping.support_team or 'Support team not recorded' }}</span></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% endif %}
+        {% if b.unmapped %}
+        <p class="notice notice-info">Business impact not established for {% for name in b.unmapped %}<code>{{ name }}</code>{{ ', ' if not loop.last }}{% endfor %}. No mapping exists for {{ 'it' if b.unmapped | length == 1 else 'them' }}; the analyzer does not guess applications or processes.</p>
+        {% endif %}
+        {% if b.not_analyzed %}<p class="hint">{{ b.not_analyzed | length }} mapped object{{ 's' if b.not_analyzed | length != 1 }} were outside this run's scope: not analyzed.</p>{% endif %}
       </section>
 
       <section class="card" aria-labelledby="top-findings">
@@ -93,7 +179,7 @@
           {% endfor %}
         </ul>
         {% endif %}
-        <p class="hint">This report does not track whether actions are done. Nothing here is marked complete.</p>
+        <p class="hint">These are the analyzer's actions. Progress is tracked through validation results and reviewer decisions in Validation &amp; approval; nothing here is marked complete automatically.</p>
       </section>
 
       <section class="card dev-only" aria-labelledby="changed-objects">
@@ -171,11 +257,29 @@
         </div>
       </section>
 
+      <section class="card" aria-labelledby="coverage-side">
+        <h3 id="coverage-side">Analysis coverage</h3>
+        {% set c = view.coverage %}
+        {% if c.recorded %}
+        <p class="coverage-figure"><strong>{{ c.analyzed }} of {{ c.in_scope }}</strong> in-scope objects fully analyzed{% if c.percent is not none %} <span class="hint">({{ c.percent }}%)</span>{% endif %}</p>
+        <p class="hint">Denominator: {{ c.denominator }}.</p>
+        <ul class="gap-list">
+          {% for key, label in [('partial', 'partially analyzed'), ('skipped', 'skipped'), ('inaccessible', 'inaccessible'), ('failed', 'failed')] %}
+          <li class="{{ 'is-zero' if not c[key] }}"><strong>{{ c[key] }}</strong> {{ label }}</li>
+          {% endfor %}
+          <li><strong>{{ c.dynamic_sql | length }}</strong> dynamic SQL statement{{ 's' if c.dynamic_sql | length != 1 }} not resolvable statically{% if c.dynamic_changed %} ({{ c.dynamic_changed }} on changed lines){% endif %}</li>
+        </ul>
+        <p class="hint">Dependencies, counted separately: {{ c.dependency.edges }} edges, {{ c.dependency.verified_edges }} from the dictionary, {{ c.dependency.inferred_edges }} inferred from source, {{ c.dependency.unresolved }} unresolved, {{ c.dependency.gaps }} unreadable.</p>
+        {% else %}
+        <p class="empty">This report version did not record analysis coverage. Readiness is indeterminate until the packages are analyzed again.</p>
+        {% endif %}
+      </section>
+
       <section class="card" aria-labelledby="unverified">
         <h3 id="unverified">What remains unverified</h3>
         {% set u = view.unverified %}
         <ul class="gap-list">
-          <li><strong>Not recorded</strong> Test execution results</li>
+          <li><strong>{{ view.review.validations | length if u.tests_recorded else 'None' }}</strong> validation result{{ 's' if view.review.validations | length != 1 }} recorded</li>
           <li><strong>{{ u.potential }}</strong> finding{{ 's' if u.potential != 1 }} potential, not confirmed</li>
           <li><strong>{{ u.unknown }}</strong> finding{{ 's' if u.unknown != 1 }} that could not be checked</li>
           {% if view.ai.used %}
@@ -192,7 +296,8 @@
         <dl class="facts">
           <div><dt>{{ ui.kind('det') }}</dt><dd>Computed in Python from the captured source and Oracle metadata. Drives severity and the recommendation.</dd></div>
           <div><dt>{{ ui.kind('ai') }}</dt><dd>{% if view.ai.used %}Written by {{ view.ai.model or 'the AI investigator' }}. An interpretation, not proof. It cannot change severity or the recommendation.{% else %}The AI investigator did not run for this report. Nothing here is model output.{% endif %}</dd></div>
-          <div><dt>{{ ui.kind('verified') }}</dt><dd>Results of tests that were actually run. None are recorded for this report.</dd></div>
+          <div><dt>{{ ui.kind('verified') }}</dt><dd>Results of tests that a person ran and recorded with evidence. {% if m.verified is none %}None are recorded for this report.{% else %}{{ m.verified }} finding{{ 's' if m.verified != 1 }} have a passed validation.{% endif %}</dd></div>
+          <div><dt>Human-reviewed</dt><dd>A reviewer recorded a decision. Reviews never upgrade AI text to fact.</dd></div>
         </dl>
       </section>
     </aside>

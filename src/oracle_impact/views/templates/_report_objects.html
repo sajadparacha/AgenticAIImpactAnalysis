@@ -1,0 +1,208 @@
+{% import "_report_macros.html" as ui %}
+{% set cls = view.classification %}
+{% set approver = view.session.role == 'approver' and view.session.approvals_enabled %}
+<section class="rv-panel" id="objects" {{ ui.panel_attrs(state, 'objects', print_mode) }}>
+  <div class="panel-head">
+    <h2>Changed objects</h2>
+    <p class="hint">Each in-scope object in every captured environment. A difference is a <strong>planned change</strong> only when an approved change record pins the exact Test checksum. Existing in Test is not enough. <strong>Unexpected drift</strong> means a checksum contradicts a trusted baseline or an approval. Anything else that differs is <strong>unclassified</strong>.</p>
+  </div>
+
+  {% if cls.recorded %}
+  <p class="notice {{ 'notice-info' if cls.baseline_state == 'available' else 'notice-warning' }}"><strong>Trusted baseline: {{ cls.baseline_state | replace('_', ' ') }}.</strong> {{ cls.baseline_note }}</p>
+  {% else %}
+  <p class="notice notice-warning">This report version did not record per-environment checksums, so changes cannot be classified. Run the analysis again.</p>
+  {% endif %}
+
+  <ul class="class-legend">
+    {% for key in ['planned', 'unexpected_drift', 'unclassified', 'no_change', 'unknown'] %}
+    <li>{{ ui.tag({'planned': 'Planned change', 'unexpected_drift': 'Unexpected drift', 'unclassified': 'Unclassified', 'no_change': 'No change', 'unknown': 'Not determined'}[key], {'planned': 'success', 'unexpected_drift': 'danger', 'unclassified': 'warning'}.get(key, 'neutral')) }} <strong>{{ cls.counts.get(key, 0) }}</strong></li>
+    {% endfor %}
+    {% if cls.production_only %}<li>{{ ui.tag('Production-only change', 'danger') }} <strong>{{ cls.production_only }}</strong></li>{% endif %}
+  </ul>
+
+  <div class="table-scroll">
+    <table class="data-table objects-table">
+      <caption class="sr-only">In-scope objects by environment</caption>
+      <thead>
+        <tr>
+          <th scope="col">Object</th>
+          <th scope="col">Change</th>
+          <th scope="col">Classification</th>
+          {% for env in (view.objects[0].envs if view.objects else []) %}
+          <th scope="col">{{ env.label }} <small>checksum · validity</small></th>
+          {% endfor %}
+          <th scope="col">Findings</th>
+          <th scope="col"><span class="sr-only">Actions</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in view.objects %}
+        <tr class="{{ 'is-drift' if item.classification == 'unexpected_drift' }}">
+          <td><code class="obj">{{ item.qualified }}</code><span class="row-meta">{{ item.object_type | lower }}</span></td>
+          <td>{{ item.change_label }}{% if item.added is not none and item.change_type not in ['unchanged', 'absent'] %}<span class="row-meta"><span class="plus">+{{ item.added }}</span> <span class="minus">−{{ item.removed }}</span></span>{% endif %}</td>
+          <td>
+            {{ ui.tag(item.label, item.tone) }}{% if item.production_only %} {{ ui.tag('Production-only', 'danger') }}{% endif %}
+            {% for reason in item.reasons %}<span class="row-meta">{{ reason }}</span>{% endfor %}
+            {% if item.manifest %}<span class="row-meta">Change record: {{ item.manifest.change_ref }} ({{ item.manifest.status }})</span>{% endif %}
+          </td>
+          {% for env in item.envs %}
+          <td class="env-cell">
+            {% if env.inaccessible %}<span class="hint">Not readable</span>
+            {% elif not env.found %}<span class="hint">Not present</span>
+            {% else %}{{ ui.short_hash(env.sha256) }}{% endif %}
+            {% if env.compile_status %}<span class="row-meta">{{ ui.tag(env.compile_status | capitalize, 'success' if env.compile_status == 'VALID' else 'danger') }}</span>{% endif %}
+            {% if env.drift %}<span class="row-meta warn-text">Changed during capture</span>{% endif %}
+            {% if env.environment == 'autumn' %}<span class="row-meta">{{ item.autumn_label }}</span>{% endif %}
+          </td>
+          {% endfor %}
+          <td>{% if item.level %}{{ ui.sev(item.level, item.level | capitalize) }} <span class="hint">{{ item.findings }}</span>{% else %}<span class="hint">None</span>{% endif %}</td>
+          <td class="actions-cell">
+            {% if item.diff_key and not print_mode %}<a class="btn-sm" href="{{ view.base_url }}?tab=source&amp;object={{ item.diff_key | urlencode }}" data-open-object="{{ item.diff_key }}">View diff<span class="sr-only"> for {{ item.qualified }} {{ item.object_type | lower }}</span></a>{% endif %}
+            {% if interactive and approver and item.envs and item.change_type in ['modified', 'created', 'deleted', 'formatting'] %}
+            <details class="menu-form">
+              <summary>Record approved change</summary>
+              <form method="post" action="/analyses/{{ view.run_id }}/manifest" class="stack-form">
+                {{ ui.form_head(view, 'objects') }}
+                <input type="hidden" name="object_key" value="{{ item.key }}">
+                <p class="hint">Pins the Test checksum {{ ui.short_hash(item.hashes.get('test')) }}. Any later change in Test shows as drift.</p>
+                <label class="field"><span>Change reference</span><input name="change_ref" maxlength="200" required></label>
+                <label class="field"><span>Description</span><textarea name="description" rows="2" maxlength="2000"></textarea></label>
+                {{ ui.actor_field('man-' ~ loop.index) }}
+                <button type="submit" class="btn">Record approved change</button>
+              </form>
+            </details>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6">No objects were compared.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if interactive %}
+  <div class="card">
+    <div class="card-head"><h3>Trusted baselines and approved changes</h3></div>
+    {% if not view.session.approvals_enabled %}
+    <p class="notice notice-info">Baselines and the change manifest are maintained by approvers. Approval recording is off because no approver access token is configured (<code>OIA_APPROVER_ACCESS_TOKEN</code>).</p>
+    {% elif not approver %}
+    <p class="hint">Signed in as {{ view.session.role or 'analyst' }}. Sign in with the approver access token to set baselines or record approved changes.</p>
+    {% else %}
+    <form method="post" action="/analyses/{{ view.run_id }}/baseline" class="inline-form">
+      {{ ui.form_head(view, 'objects') }}
+      <label class="field"><span>Environment</span>
+        <select name="environment"><option value="production">{{ view.environment_labels.production }}</option>{% if 'autumn' in view.environment_labels and report.environments | selectattr('role', 'equalto', 'staging') | list %}<option value="autumn">{{ view.environment_labels.autumn }}</option>{% endif %}</select>
+      </label>
+      <label class="field"><span>Objects</span>
+        <select name="object_key"><option value="all">All in-scope objects</option>{% for item in view.objects %}<option value="{{ item.key }}">{{ item.qualified }} {{ item.object_type | lower }}</option>{% endfor %}</select>
+      </label>
+      <label class="field field-grow"><span>Reason</span><input name="note" maxlength="2000" required placeholder="For example: verified against release R-2026.10"></label>
+      {{ ui.actor_field('base') }}
+      <button type="submit" class="btn">Trust the checksums captured in this run</button>
+    </form>
+    <p class="hint">Only set a baseline after confirming the captured version is the intended one. Objects that changed during capture are skipped.</p>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if view.registry.baselines or view.registry.manifest %}
+  <div class="two-up">
+    <div class="card">
+      <h3>Baselines for these packages</h3>
+      <ul class="record-list">
+        {% for entry in view.registry.baselines | reverse %}
+        <li>
+          <strong>{{ view.environment_labels.get(entry.environment, entry.environment) }}</strong> <code>{{ entry.owner }}.{{ entry.name }}</code> {{ entry.object_type | lower }} · {{ ui.short_hash(entry.sha256) }} · {{ entry.status }}
+          <span class="row-meta">Set {{ entry.set_at[:16] | replace('T', ' ') }} UTC by {{ entry.set_by.name }} (self-declared) · {{ entry.note }}</span>
+          {% if interactive and approver and entry.status == 'active' %}
+          <form method="post" action="/registry/baselines/{{ entry.id }}/clear" class="inline-form compact">
+            <input type="hidden" name="csrf_token_value" value="{{ view.session.csrf }}"><input type="hidden" name="run_id" value="{{ view.run_id }}">
+            <label class="field"><span class="sr-only">Reason</span><input name="reason" maxlength="2000" required placeholder="Reason to clear"></label>
+            <label class="field"><span class="sr-only">Your name</span><input name="actor_name" maxlength="80" placeholder="Your name"></label>
+            <button type="submit" class="btn-ghost">Clear</button>
+          </form>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Approved change records</h3>
+      <ul class="record-list">
+        {% for entry in view.registry.manifest | reverse %}
+        <li>
+          <strong>{{ entry.change_ref }}</strong> <code>{{ entry.owner }}.{{ entry.name }}</code> {{ entry.object_type | lower }} · {{ ui.short_hash(entry.sha256) }} · {{ entry.status }}
+          <span class="row-meta">Approved {{ entry.approved_at[:16] | replace('T', ' ') }} UTC by {{ entry.approved_by.name }} (self-declared){% if entry.description %} · {{ entry.description }}{% endif %}</span>
+          {% if interactive and approver and entry.status == 'approved' %}
+          <form method="post" action="/registry/manifest/{{ entry.id }}/withdraw" class="inline-form compact">
+            <input type="hidden" name="csrf_token_value" value="{{ view.session.csrf }}"><input type="hidden" name="run_id" value="{{ view.run_id }}">
+            <label class="field"><span class="sr-only">Reason</span><input name="reason" maxlength="2000" required placeholder="Reason to withdraw"></label>
+            <label class="field"><span class="sr-only">Your name</span><input name="actor_name" maxlength="80" placeholder="Your name"></label>
+            <button type="submit" class="btn-ghost">Withdraw</button>
+          </form>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+  {% endif %}
+
+  {% set comp = view.compilation %}
+  <div class="card" id="compilation">
+    <div class="card-head"><h3>Compilation readiness</h3>{{ ui.kind('det') }}</div>
+    {% if not comp.recorded %}
+    <p class="empty">This report version did not record object validity.</p>
+    {% elif not comp.evaluated %}
+    <p class="notice notice-warning">{{ comp.reason }}</p>
+    {% else %}
+    <p class="hint">Read from ALL_OBJECTS and ALL_ERRORS in {{ comp.environments | join(', ') }}. {{ comp.checked }} object status rows checked, including direct callers. This application never compiles or alters an object.</p>
+    {% if comp.reason %}<p class="notice notice-warning">{{ comp.reason }}</p>{% endif %}
+    {% if comp.invalid %}
+    <div class="table-scroll">
+      <table class="data-table compact">
+        <thead><tr><th scope="col">Object</th><th scope="col">Environment</th><th scope="col">Status</th><th scope="col">Role</th><th scope="col">Errors</th></tr></thead>
+        <tbody>
+          {% for item in comp.invalid %}
+          <tr>
+            <td><code class="obj">{{ item.owner }}.{{ item.name }}</code><span class="row-meta">{{ item.object_type | lower }}</span></td>
+            <td>{{ item.environment_label }}</td>
+            <td>{{ ui.tag(item.status | capitalize, 'danger') }}</td>
+            <td>{{ 'In scope' if item.role == 'in_scope' else 'Dependent (caller)' }}</td>
+            <td>{% for error in item.errors %}<span class="row-meta">Line {{ error.line }}: {{ error.text }}</span>{% else %}<span class="hint">No ALL_ERRORS rows visible</span>{% endfor %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty">Every checked object is VALID in every evaluated environment.</p>
+    {% endif %}
+    {% endif %}
+  </div>
+
+  <div class="card" id="transactions">
+    <div class="card-head"><h3>Transaction and data impact</h3>{{ ui.kind('det') }}</div>
+    <p class="hint">Observed differences come from comparing the routine in Test with Production. Consequences are predictions until a validation result is recorded.</p>
+    {% for profile in view.transactions %}
+    <article class="txn">
+      <h4><code>{{ profile.qualified }}.{{ profile.routine }}</code> <span class="hint">{{ profile.change }}</span></h4>
+      <dl class="facts">
+        <div><dt>What changed (observed)</dt><dd>{% if profile.differences %}<ul class="plain-list">{% for item in profile.differences %}<li>{{ item }}</li>{% endfor %}</ul>{% else %}No change to data access, transaction control, or exception handling was observed.{% endif %}</dd></div>
+        <div><dt>Why it might affect production (predicted)</dt><dd>{% for row in profile.findings %}<p>{{ ui.sev(row.level, row.level_label) }} <a href="{{ ui.finding_href(view, row.id) }}" data-open-finding="{{ row.id }}">{{ row.id }}</a> {{ row.headline }}</p>{% else %}No finding links to this routine.{% endfor %}</dd></div>
+        <div><dt>What needs testing</dt><dd>{% if profile.testing %}<ul class="plain-list">{% for step in profile.testing | unique %}<li>{{ step }}</li>{% endfor %}</ul>{% else %}No specific test was proposed.{% endif %}</dd></div>
+      </dl>
+      {% if profile.test %}
+      <details class="disclosure dev-only"{% if print_mode %} open{% endif %}>
+        <summary>Statements in Test</summary>
+        <p class="hint">Reads: {{ profile.test.reads | join(', ') or 'none' }} · Writes: {{ profile.test.writes | join(', ') or 'none' }} · COMMIT {{ profile.test.commits | length }} · ROLLBACK {{ profile.test.rollbacks | length }} · SAVEPOINT {{ profile.test.savepoints | length }} · dynamic SQL {{ profile.test.dynamic_sql | length }} · handlers {{ profile.test.handlers | length }}{% if profile.test.autonomous %} · autonomous transaction{% endif %}</p>
+        {% if profile.test.sequence %}<p class="hint">Order: {{ profile.test.sequence | join(' → ') }}</p>{% endif %}
+      </details>
+      {% endif %}
+    </article>
+    {% else %}
+    <p class="empty">No changed routine was profiled.</p>
+    {% endfor %}
+  </div>
+</section>

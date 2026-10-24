@@ -1,23 +1,39 @@
 {% import "_report_macros.html" as ui %}
 {% set f = row.finding %}
+{% set interactive = view.session.interactive and not print_mode %}
 <article class="detail" id="detail-{{ row.id }}" data-detail="{{ row.id }}" aria-labelledby="detail-{{ row.id }}-title"{% if not print_mode and state.finding != row.id %} hidden{% endif %}>
   <header class="detail-head">
-    <p class="chips">{{ ui.sev(row.level, row.level_label) }} {{ ui.source(row.source, row.source_label) }}{% if row.driver %} <span class="driver">{{ row.driver_label }}</span>{% endif %}</p>
+    <p class="chips">{{ ui.sev(row.level, row.level_label) }} {{ ui.source(row.source, row.source_label) }} {{ ui.tag(row.evidence_class_label, 'success' if row.evidence_class == 'test_validated' else 'neutral') }}{% if row.driver %} <span class="driver">{{ row.driver_label }}</span>{% endif %}</p>
     <h3 id="detail-{{ row.id }}-title" tabindex="-1">{{ row.headline }}</h3>
     <p class="row-meta">{{ row.id }} · {{ row.category_label }} · {% if row.object %}<code>{{ row.object }}</code> ({{ row.object_type | lower }}){% else %}Object not identified{% endif %}</p>
+    <dl class="kv kv-tight dev-only">
+      {% if row.rule_id %}<div><dt>Rule</dt><dd><code>{{ row.rule_id }}</code></dd></div>{% endif %}
+      {% if row.fingerprint %}<div><dt>Fingerprint</dt><dd><code>{{ row.fingerprint }}</code> <span class="hint">stable across runs</span></dd></div>{% endif %}
+      <div><dt>Run</dt><dd><code>{{ view.run_id }}</code></dd></div>
+    </dl>
   </header>
 
   <div class="block block-observed">
-    <h4><span class="block-no">1</span> Observed evidence {{ ui.kind('det') }}</h4>
+    <h4><span class="block-no">1</span> What changed? {{ ui.kind('det') }}</h4>
     {% if row.source == 'ai' %}
     <p>No deterministic evidence. This item comes only from the AI investigator and did not match a deterministic finding. Treat it as a lead to check, not a fact.</p>
+    {% else %}
+    <p>{{ row.headline }}</p>
+    {% if row.change_type_label %}<p class="hint">Object change: {{ row.change_type_label }}{% if row.classification_label %} · {{ row.classification_label }}{% endif %}.</p>{% endif %}
+    {% endif %}
+  </div>
+
+  <div class="block">
+    <h4><span class="block-no">2</span> Where is the evidence?</h4>
+    {% if row.source == 'ai' %}
+    <p class="hint">The model cited: {{ f.evidence or 'nothing specific' }}. Citations are checked against captured source but are not deterministic evidence.</p>
     {% else %}
     <p class="evidence-text">{{ f.evidence }}</p>
     <dl class="kv">
       <div><dt>Evidence ID</dt><dd><code>{{ row.id }}</code></dd></div>
       <div><dt>Evidence status</dt><dd>{{ ui.evidence(row.evidence_status, row.evidence_label) }}</dd></div>
       <div><dt>Confidence</dt><dd>{{ row.confidence | capitalize }} <span class="hint">(qualitative)</span></dd></div>
-      <div><dt>Captured from</dt><dd>{{ f.source_database | capitalize }}</dd></div>
+      <div><dt>Captured from</dt><dd>{{ row.environment_label }}</dd></div>
       {% if f.changed_lines_test %}
       <div class="dev-only"><dt>Lines in Test</dt><dd>
         {% for line in f.changed_lines_test %}{% if row.diff_link %}<a href="{{ view.base_url }}?tab=source&amp;object={{ row.diff_link.key | urlencode }}&amp;line={{ line }}&amp;side=t" data-goto-line="{{ row.diff_link.key }}|t|{{ line }}">{{ line }}</a>{% else %}{{ line }}{% endif %}{{ ', ' if not loop.last }}{% endfor %}
@@ -33,18 +49,42 @@
       {% if f.version_hash %}<div class="kv-wide dev-only"><dt>Version hash</dt><dd><code class="hash">{{ f.version_hash }}</code></dd></div>{% endif %}
     </dl>
     {% endif %}
+    <ul class="link-list">
+      {% if row.diff_link %}
+      <li><a href="{{ ui.diff_href(view, row.diff_link) }}" data-goto-line="{{ row.diff_link.key }}|{{ row.diff_link.side }}|{{ row.diff_link.line or '' }}">Open source diff: {{ row.diff_link.label }}</a></li>
+      {% elif row.source != 'ai' %}
+      <li class="hint">No captured source diff for {{ row.object }}.</li>
+      {% endif %}
+      {% for dep in row.dependencies %}
+      <li><a href="{{ view.base_url }}?tab=dependencies#{{ dep.dom_id }}" data-goto-dep="{{ dep.dom_id }}">Dependency: {{ dep.label }}</a> <span class="hint">{{ dep.direction | lower }}</span></li>
+      {% endfor %}
+    </ul>
+  </div>
+
+  <div class="block">
+    <h4><span class="block-no">3</span> Why this severity?</h4>
+    {% if row.source == 'ai' %}
+    <p>Not rated. AI-only items have no severity and cannot affect readiness.</p>
+    {% elif row.severity_rationale %}
+    <p>{{ row.severity_rationale }}</p>
+    {% else %}
+    <p class="hint">This report version did not record a severity rationale. Severity {{ row.level_label | lower }} comes from the deterministic rule for {{ row.category_label | lower }} findings.</p>
+    {% endif %}
   </div>
 
   <div class="block block-ai">
-    <h4><span class="block-no">2</span> AI interpretation {{ ui.kind('ai') }}</h4>
+    <h4><span class="block-no">4</span> What could happen in production? {{ ui.kind('ai') if row.note_id or row.source == 'ai' else '' }}</h4>
+    {% if row.source != 'ai' %}<p>{{ " ".join(f.explanation.split()) }}</p>{% endif %}
+    {% if row.attributes.signature_difference %}
+    <p class="hint">Signature difference: {{ row.attributes.signature_difference }}. Caller impact: {{ (row.attributes.caller_impact or 'unknown') | replace('_', ' ') }}.</p>
+    {% endif %}
     {% if row.source == 'ai' %}
     {% if row.ai_explanation %}<p>{{ row.ai_explanation }}</p>{% endif %}
-    {% if f.evidence and f.evidence.split() != row.ai_explanation.split() %}<p class="hint">What the model looked at: {{ f.evidence }}</p>{% endif %}
     {% if row.ai_unchecked %}<p class="hint">Not checked: {{ row.ai_unchecked }}</p>{% endif %}
     {% for flag in row.ai_flags %}<p class="notice notice-warning">{{ flag }}</p>{% endfor %}
     <p class="hint">Note <a href="/analyses/{{ view.run_id }}/findings/{{ row.id }}">{{ row.id }}</a>{% if view.ai.model %} · {{ view.ai.model }}{% endif %}</p>
     {% elif row.note_id %}
-    <p>{{ row.ai_explanation }}</p>
+    <p><span class="attrib attrib-ai">AI interpretation</span> {{ row.ai_explanation }}</p>
     {% if row.ai_unchecked %}<p class="hint">Not checked: {{ row.ai_unchecked }}</p>{% endif %}
     {% for flag in row.ai_flags %}<p class="notice notice-warning">{{ flag }}</p>{% endfor %}
     <p class="hint">Note <a href="/analyses/{{ view.run_id }}/findings/{{ row.note_id }}">{{ row.note_id }}</a> explains evidence {{ row.id }}{% if view.ai.model %} · {{ view.ai.model }}{% endif %}</p>
@@ -55,17 +95,24 @@
     {% else %}
     <p class="hint">The AI investigator did not run for this report.</p>
     {% endif %}
-    <p class="caveat">AI text is an interpretation, not tested behavior. It cannot confirm a finding or change its severity or the recommendation.</p>
+    <p class="caveat">Consequences are predicted from static evidence, not observed. AI text is an interpretation; it cannot confirm a finding or change its severity or readiness.</p>
   </div>
 
-  <div class="block block-verify">
-    <h4><span class="block-no">3</span> Verification status</h4>
-    <p><strong>Verification not recorded.</strong> This application does not record test runs or reviewer sign-off.</p>
-    {% if row.source != 'ai' %}<p class="hint">Static evidence: {{ row.evidence_label | lower }}.</p>{% endif %}
+  <div class="block">
+    <h4><span class="block-no">5</span> Does it block deployment?</h4>
+    {% if row.policy %}
+    <p>{{ ui.tag(row.blocking_label, 'danger' if row.blocking == 'blocker' else 'warning') }} {{ ui.tag(row.policy_state_label, row.policy_state_tone) }}</p>
+    <p>Rule <code>{{ row.policy.item.rule_id }}</code>: {{ row.policy.item.title }}. {{ row.policy.reason }}</p>
+    <p class="hint">How it clears: {{ view.decision.resolutions.get(row.policy.item.resolution, '') }}</p>
+    {% elif row.source == 'ai' %}
+    <p>No. Investigator output cannot block or clear deployment.</p>
+    {% else %}
+    <p>No. No enabled rule in policy {{ view.decision.policy_version }} applies to this finding.</p>
+    {% endif %}
   </div>
 
   <div class="block block-next">
-    <h4><span class="block-no">4</span> Recommended investigation</h4>
+    <h4><span class="block-no">6</span> What needs to be tested?</h4>
     {% if row.recommended_action %}
     <p><span class="attrib">Analyzer rule</span> {{ row.recommended_action }}</p>
     {% endif %}
@@ -77,18 +124,73 @@
     {% endif %}
     {% if not row.recommended_action and not row.proposed_tests and not row.ai_todo %}<p class="hint">No investigation steps were recorded.</p>{% endif %}
     <ul class="link-list">
-      {% if row.diff_link %}
-      <li><a href="{{ ui.diff_href(view, row.diff_link) }}" data-goto-line="{{ row.diff_link.key }}|{{ row.diff_link.side }}|{{ row.diff_link.line or '' }}">Open source diff: {{ row.diff_link.label }}</a></li>
-      {% elif row.source != 'ai' %}
-      <li class="hint">No captured source diff for {{ row.object }}.</li>
-      {% endif %}
-      {% for dep in row.dependencies %}
-      <li><a href="{{ view.base_url }}?tab=dependencies#{{ dep.dom_id }}" data-goto-dep="{{ dep.dom_id }}">Dependency: {{ dep.label }}</a> <span class="hint">{{ dep.direction | lower }}</span></li>
-      {% endfor %}
       {% if row.snippets %}
       <li><a href="/analyses/{{ view.run_id }}/findings/{{ row.id }}">{{ row.snippets }} SQL test script{{ 's' if row.snippets != 1 }} to run in Test</a></li>
       {% endif %}
       <li><a href="/analyses/{{ view.run_id }}/findings/{{ row.id }}">Open the full finding page</a></li>
     </ul>
+  </div>
+
+  <div class="block block-verify">
+    <h4><span class="block-no">7</span> Validation and review status</h4>
+    {% if row.validations %}
+    <ul class="record-list">
+      {% for record in row.validations %}
+      <li>
+        <strong>{{ view.review.validation_statuses.get(record.status, record.status) }}</strong> · {{ record.test_case }} · {{ view.environment_labels.get(record.environment, record.environment) }}
+        <span class="row-meta">{{ record.evidence or 'No evidence reference' }}{% if record.assigned_reviewer %} · reviewer {{ record.assigned_reviewer }}{% endif %} · updated {{ record.updated_at[:16] | replace('T', ' ') }} UTC by {{ record.updated_by.name }} (self-declared)</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p><strong>Validation not recorded.</strong> No test result has been recorded for this finding.</p>
+    {% endif %}
+    {% if row.reviews %}
+    <ul class="record-list">
+      {% for record in row.reviews %}
+      <li><strong>{{ view.review.review_decisions.get(record.decision, record.decision) }}</strong>{% if record.reason %}: {{ record.reason }}{% endif %}<span class="row-meta">{{ record.at[:16] | replace('T', ' ') }} UTC by {{ record.actor.name }} (self-declared, {{ record.actor.role }})</span></li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="hint">No reviewer decision recorded.</p>
+    {% endif %}
+    {% if row.source != 'ai' %}<p class="hint">Static evidence: {{ row.evidence_label | lower }}.</p>{% endif %}
+
+    {% if interactive and row.source != 'ai' %}
+    <details class="disclosure record-form">
+      <summary>Record a validation result</summary>
+      <form method="post" action="/analyses/{{ view.run_id }}/validations" class="stack-form">
+        {{ ui.form_head(view, 'findings') }}
+        <input type="hidden" name="finding_id" value="{{ row.id }}">
+        <label class="field"><span>Test case</span><input name="test_case" maxlength="200" required></label>
+        <label class="field"><span>Environment</span>
+          <select name="environment">{% for env, label in view.environment_labels.items() %}<option value="{{ env }}">{{ label }}</option>{% endfor %}</select>
+        </label>
+        <label class="field"><span>Result</span>
+          <select name="status">{% for key, label in view.review.validation_statuses.items() if key != 'none' %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select>
+        </label>
+        <label class="field"><span>Evidence <small>(log, ticket, or result reference; required for passed or failed)</small></span><textarea name="evidence" rows="2" maxlength="2000"></textarea></label>
+        <label class="field"><span>Assigned reviewer</span><input name="assigned_reviewer" maxlength="200"></label>
+        <label class="field"><span>Executed at <small>(as recorded by the tester)</small></span><input name="executed_at" maxlength="40" placeholder="2026-10-24 14:00"></label>
+        <label class="field"><span>Notes</span><textarea name="notes" rows="2" maxlength="2000"></textarea></label>
+        {{ ui.actor_field('val-' ~ row.id) }}
+        <button type="submit" class="btn">Save validation result</button>
+      </form>
+    </details>
+    <details class="disclosure record-form">
+      <summary>Record a reviewer decision</summary>
+      <form method="post" action="/analyses/{{ view.run_id }}/reviews" class="stack-form">
+        {{ ui.form_head(view, 'findings') }}
+        <input type="hidden" name="finding_id" value="{{ row.id }}">
+        <label class="field"><span>Decision</span>
+          <select name="decision">{% for key, label in view.review.review_decisions.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select>
+        </label>
+        <label class="field"><span>Reason <small>(required for Not an issue and Confirmed issue)</small></span><textarea name="reason" rows="2" maxlength="2000"></textarea></label>
+        {{ ui.actor_field('rev-' ~ row.id) }}
+        <button type="submit" class="btn">Save reviewer decision</button>
+      </form>
+      <p class="hint">A reviewer decision cannot clear a finding whose rule requires a fix and a new analysis.</p>
+    </details>
+    {% endif %}
   </div>
 </article>

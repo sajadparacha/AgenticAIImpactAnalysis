@@ -19,9 +19,20 @@ from oracle_impact.infrastructure.llm.plain_text import (
 )
 from oracle_impact.models.domain import Snapshot
 from oracle_impact.models.report import Report
-from oracle_impact.security import csrf_token, csrf_valid, issue_session, session_valid, token_matches
+from oracle_impact.security import (
+    ANALYST,
+    APPROVER,
+    csrf_token,
+    csrf_valid,
+    issue_session,
+    session_role,
+    session_valid,
+    token_matches,
+)
 from oracle_impact.services.analysis_service import UnknownModel
-from oracle_impact.services.report_view import build_report_view, initial_state
+from oracle_impact.services.business_impact import CRITICALITIES
+from oracle_impact.services.decision_service import ACTION_MESSAGES, ERROR_CODES, ActionError, actor
+from oracle_impact.services.report_view import active_comparison, build_report_view, initial_state
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 TEMPLATES = Jinja2Templates(directory=str(PACKAGE_ROOT / "views" / "templates"))
@@ -33,7 +44,9 @@ TEMPLATES.env.globals["issue_list"] = issue_list
 TEMPLATES.env.globals["ai_sources"] = ai_sources
 TEMPLATES.env.globals["build_report_view"] = build_report_view
 TEMPLATES.env.globals["initial_state"] = initial_state
+TEMPLATES.env.globals["active_comparison"] = active_comparison
 SESSION_COOKIE = "oia_session"
+_TABS_AFTER = {"validation", "objects", "findings", "overview"}
 
 
 def install_routes(app: FastAPI) -> None:
@@ -77,7 +90,11 @@ def install_routes(app: FastAPI) -> None:
     @app.post("/login")
     def login(request: Request, access_token: str = Form("")):
         settings = request.app.state.settings
-        if not token_matches(settings.app_access_token, access_token):
+        if settings.approvals_enabled and token_matches(settings.approver_access_token, access_token):
+            role = APPROVER
+        elif token_matches(settings.app_access_token, access_token):
+            role = ANALYST
+        else:
             return TEMPLATES.TemplateResponse(
                 request,
                 "login.html",
@@ -87,7 +104,7 @@ def install_routes(app: FastAPI) -> None:
         response = RedirectResponse("/", status_code=303)
         response.set_cookie(
             SESSION_COOKIE,
-            issue_session(settings.secret_key),
+            issue_session(settings.secret_key, role),
             httponly=True,
             samesite="lax",
             secure=settings.cookie_secure,
@@ -150,9 +167,93 @@ def install_routes(app: FastAPI) -> None:
         report = _with_snippets(request, run_id)
         if report is None:
             return TEMPLATES.TemplateResponse(request, "missing.html", {"run_id": run_id}, status_code=404)
-        context = _report_context(request, run_id, report)
+        context = _report_context(request, run_id, report, interactive=True)
         context["state"] = initial_state(context["view"], request.query_params)
+        code = request.query_params.get("msg", "")
+        if code in ACTION_MESSAGES:
+            context["notice"] = {"text": ACTION_MESSAGES[code], "error": code in ERROR_CODES}
         return TEMPLATES.TemplateResponse(request, "report.html", context)
+
+    @app.get("/analyses/{run_id}/review")
+    def review_json(request: Request, run_id: str):
+        report = request.app.state.decisions.load(run_id)
+        if report is None:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        context = request.app.state.decisions.context(report)
+        readiness = context["readiness"]
+        return JSONResponse(
+            {
+                "run_id": run_id,
+                "readiness": {
+                    key: value
+                    for key, value in readiness.items()
+                    if key not in {"blockers", "validations"}
+                }
+                | {
+                    "blockers": [{**entry, "item": entry["item"].model_dump()} for entry in readiness["blockers"]],
+                    "validations": [{**entry, "item": entry["item"].model_dump()} for entry in readiness["validations"]],
+                },
+                "classification": {key: value for key, value in context["classification"].items() if key != "objects"}
+                | {"objects": [{key: value for key, value in item.items() if key != "environments"} for item in context["classification"]["objects"]]},
+                "review": context["review"],
+                "approval": context["approval"],
+            }
+        )
+
+    @app.post("/analyses/{run_id}/validations")
+    async def record_validation(request: Request, run_id: str):
+        return await _act(request, run_id, "validation", "validation_saved", lambda svc, report, form, who: svc.record_validation(report, form, who))
+
+    @app.post("/analyses/{run_id}/reviews")
+    async def record_review(request: Request, run_id: str):
+        return await _act(request, run_id, "validation", "review_saved", lambda svc, report, form, who: svc.record_review(report, form, who))
+
+    @app.post("/analyses/{run_id}/approval")
+    async def record_approval(request: Request, run_id: str):
+        return await _act(request, run_id, "validation", "approval_saved", lambda svc, report, form, who: svc.record_approval(report, form, who))
+
+    @app.post("/analyses/{run_id}/baseline")
+    async def set_baseline(request: Request, run_id: str):
+        return await _act(request, run_id, "objects", "baseline_saved", lambda svc, report, form, who: svc.set_baseline(report, form, who))
+
+    @app.post("/analyses/{run_id}/manifest")
+    async def approve_manifest(request: Request, run_id: str):
+        return await _act(request, run_id, "objects", "manifest_saved", lambda svc, report, form, who: svc.approve_manifest(report, form, who))
+
+    @app.post("/registry/manifest/{entry_id}/withdraw")
+    async def withdraw_manifest(request: Request, entry_id: str):
+        return await _registry_act(request, "manifest_withdrawn", lambda svc, form, who: svc.withdraw_manifest(entry_id, form, who))
+
+    @app.post("/registry/baselines/{entry_id}/clear")
+    async def clear_baseline(request: Request, entry_id: str):
+        return await _registry_act(request, "baseline_cleared", lambda svc, form, who: svc.clear_baseline(entry_id, form, who))
+
+    @app.get("/mappings", response_class=HTMLResponse)
+    def mappings_page(request: Request, msg: str = ""):
+        settings = request.app.state.settings
+        session = request.cookies.get(SESSION_COOKIE, "")
+        mappings = request.app.state.registry.mappings()
+        return TEMPLATES.TemplateResponse(
+            request,
+            "mappings.html",
+            {
+                "settings": settings,
+                "mappings": [item for item in mappings if item.get("status") == "active"],
+                "retired": [item for item in mappings if item.get("status") != "active"],
+                "csrf_token": csrf_token(settings.secret_key, session),
+                "role": session_role(settings.secret_key, session),
+                "criticalities": CRITICALITIES,
+                "notice": {"text": ACTION_MESSAGES[msg], "error": msg in ERROR_CODES} if msg in ACTION_MESSAGES else None,
+            },
+        )
+
+    @app.post("/mappings")
+    async def add_mapping(request: Request):
+        return await _mapping_act(request, "mapping_saved", lambda svc, form, who: svc.add_mapping(form, who))
+
+    @app.post("/mappings/{mapping_id}/retire")
+    async def retire_mapping(request: Request, mapping_id: str):
+        return await _mapping_act(request, "mapping_retired", lambda svc, form, who: svc.retire_mapping(mapping_id, who))
 
     @app.get("/analyses/{run_id}/findings/{finding_id}", response_class=HTMLResponse)
     def finding_detail(request: Request, run_id: str, finding_id: str):
@@ -181,9 +282,10 @@ def install_routes(app: FastAPI) -> None:
         if format == "pdf":
             from oracle_impact.infrastructure.reports.pdf import render_pdf
 
-            markup = TEMPLATES.get_template("print.html").render(_report_context(request, run_id, report))
+            context = _report_context(request, run_id, report)
+            markup = TEMPLATES.get_template("print.html").render(context)
             try:
-                payload = render_pdf(report, markup)
+                payload = render_pdf(report, markup, context["view"])
             except Exception:
                 return JSONResponse(
                     {"error": "PDF export is unavailable in this environment."},
@@ -208,6 +310,7 @@ def _dashboard_context(request: Request, error: str, packages: str, model: str =
         "error": error,
         "fixture_packages": ["DEMO.PKG_STATUS", "DEMO.PKG_BILLING"] if settings.fixture_mode else [],
         "submitted_packages": packages,
+        "autumn_label": request.app.state.service.labels().get("autumn", ""),
         "models": models,
         "selected_model": model if model in models else settings.llm_model,
     }
@@ -245,9 +348,80 @@ def _report(request: Request, run_id: str) -> Report | None:
     return Report.model_validate(payload)
 
 
-def _report_context(request: Request, run_id: str, report: Report) -> dict:
-    view = build_report_view(report, _read(request, run_id, "status.json"))
+def _report_context(request: Request, run_id: str, report: Report, interactive: bool = False) -> dict:
+    settings = request.app.state.settings
+    cookie = request.cookies.get(SESSION_COOKIE, "")
+    session = {
+        "role": session_role(settings.secret_key, cookie),
+        "csrf": csrf_token(settings.secret_key, cookie) if interactive else "",
+        "approvals_enabled": settings.approvals_enabled,
+        "interactive": interactive,
+    }
+    decision = request.app.state.decisions.context(report)
+    view = build_report_view(report, _read(request, run_id, "status.json"), decision, session)
     return {"report": report, "sections": _sections(report), "view": view, "state": initial_state(view, {})}
+
+
+async def _form(request: Request) -> tuple[dict, dict | None]:
+    """Parsed form fields and the acting user, or None when the session or CSRF token is not valid."""
+    settings = request.app.state.settings
+    form = {key: value for key, value in (await request.form()).items() if isinstance(value, str)}
+    cookie = request.cookies.get(SESSION_COOKIE)
+    if not csrf_valid(settings.secret_key, cookie, form.get("csrf_token_value")):
+        return form, None
+    return form, actor(session_role(settings.secret_key, cookie) or ANALYST, form.get("actor_name", ""))
+
+
+def _back(run_id: str, tab: str, code: str, finding: str = "") -> RedirectResponse:
+    tab = tab if tab in _TABS_AFTER else "validation"
+    target = f"/analyses/{run_id}/report?tab={tab}&msg={code}"
+    if finding:
+        target += f"&finding={finding}"
+    return RedirectResponse(target, status_code=303)
+
+
+async def _act(request: Request, run_id: str, tab: str, success: str, action) -> Response:
+    service = request.app.state.decisions
+    report = service.load(run_id)
+    if report is None:
+        return TEMPLATES.TemplateResponse(request, "missing.html", {"run_id": run_id}, status_code=404)
+    form, who = await _form(request)
+    finding = form.get("finding_id", "") if form.get("finding_id", "") in {item.id for item in report.findings} else ""
+    back_tab = form.get("return_tab", tab)
+    if who is None:
+        return _back(run_id, back_tab, "form_expired", finding)
+    try:
+        action(service, report, form, who)
+    except ActionError as exc:
+        return _back(run_id, back_tab, exc.code, finding)
+    return _back(run_id, back_tab, success, finding)
+
+
+async def _registry_act(request: Request, success: str, action) -> Response:
+    service = request.app.state.decisions
+    form, who = await _form(request)
+    run_id = form.get("run_id", "")
+    if service.load(run_id) is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    if who is None:
+        return _back(run_id, "objects", "form_expired")
+    try:
+        action(service, form, who)
+    except ActionError as exc:
+        return _back(run_id, "objects", exc.code)
+    return _back(run_id, "objects", success)
+
+
+async def _mapping_act(request: Request, success: str, action) -> Response:
+    service = request.app.state.decisions
+    form, who = await _form(request)
+    if who is None:
+        return RedirectResponse("/mappings?msg=form_expired", status_code=303)
+    try:
+        action(service, form, who)
+    except ActionError as exc:
+        return RedirectResponse(f"/mappings?msg={exc.code}", status_code=303)
+    return RedirectResponse(f"/mappings?msg={success}", status_code=303)
 
 
 def _sections(report: Report) -> dict:

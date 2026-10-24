@@ -63,6 +63,22 @@ class GrantFetch:
 
 
 @dataclass
+class StatusFetch:
+    """ALL_OBJECTS rows for one name: (object_type, status, last_ddl_time)."""
+
+    inaccessible: bool = False
+    objects: list[tuple[str, str, str | None]] = field(default_factory=list)
+
+
+@dataclass
+class ErrorFetch:
+    """ALL_ERRORS rows for one name: (object_type, line, position, text, attribute)."""
+
+    inaccessible: bool = False
+    errors: list[tuple[str, int, int, str, str]] = field(default_factory=list)
+
+
+@dataclass
 class StoredEdge:
     dependent_owner: str
     dependent_name: str
@@ -106,6 +122,15 @@ class Catalog:
     grants: dict[tuple[str, str], list[tuple[str, str]]] = field(default_factory=dict)
     inaccessible_grants: set[tuple[str, str]] = field(default_factory=set)
     grants_complete: bool = True
+    object_status: dict[tuple[str, str, str], str] = field(default_factory=dict)
+    compile_errors: dict[tuple[str, str], list[tuple[str, int, int, str, str]]] = field(default_factory=dict)
+    inaccessible_status: set[tuple[str, str]] = field(default_factory=set)
+
+    def set_status(self, owner: str, name: str, object_type: str, status: str) -> None:
+        self.object_status[(owner, name, object_type)] = status
+
+    def add_compile_error(self, owner: str, name: str, object_type: str, line: int, text: str, position: int = 1) -> None:
+        self.compile_errors.setdefault((owner, name), []).append((object_type, line, position, text, "ERROR"))
 
     def add_grant(self, owner: str, name: str, grantee: str, privilege: str) -> None:
         self.grants.setdefault((owner, name), []).append((grantee, privilege))
@@ -239,6 +264,21 @@ class FixtureGateway:
             return GrantFetch(inaccessible=True, complete=False)
         return GrantFetch(complete=self.catalog.grants_complete, grants=list(self.catalog.grants.get((owner, name), [])))
 
+    def fetch_object_status(self, owner: str, name: str) -> StatusFetch:
+        if (owner, name) in self.catalog.inaccessible_status:
+            return StatusFetch(inaccessible=True)
+        rows = []
+        for (src_owner, src_name, object_type) in sorted(self.catalog.sources):
+            if src_owner == owner and src_name == name:
+                status = self.catalog.object_status.get((owner, name, object_type), "VALID")
+                rows.append((object_type, status, None))
+        return StatusFetch(objects=rows)
+
+    def fetch_compile_errors(self, owner: str, name: str) -> ErrorFetch:
+        if (owner, name) in self.catalog.inaccessible_status:
+            return ErrorFetch(inaccessible=True)
+        return ErrorFetch(errors=list(self.catalog.compile_errors.get((owner, name), [])))
+
     def fetch_table(self, owner: str, table: str) -> TableMetadata:
         if (owner, table) in self.catalog.inaccessible_tables:
             return TableMetadata(owner=owner, name=table, exists=False, inaccessible=True)
@@ -273,6 +313,12 @@ class UnconfiguredGateway:
         raise OracleNotConfigured(self._message)
 
     def fetch_grants(self, owner: str, name: str) -> GrantFetch:
+        raise OracleNotConfigured(self._message)
+
+    def fetch_object_status(self, owner: str, name: str) -> StatusFetch:
+        raise OracleNotConfigured(self._message)
+
+    def fetch_compile_errors(self, owner: str, name: str) -> ErrorFetch:
         raise OracleNotConfigured(self._message)
 
     def fetch_table(self, owner: str, table: str) -> TableMetadata:
