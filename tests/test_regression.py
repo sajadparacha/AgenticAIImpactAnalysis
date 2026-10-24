@@ -427,7 +427,7 @@ def test_investigator_review_shows_reviewed_severity_without_driving_the_decisio
     assert severity_label(anchor, report) == {"level": anchor.severity.value, "text": anchor.severity.value}
     page = TEMPLATES.get_template("report_body.html").render({"report": report, "sections": _sections(report)})
     issues = page.split('id="changes"', 1)[1].split("</section>", 1)[0]
-    row = issues.split(f'id="issue-{anchor.id}"', 1)[1].split("</li>", 1)[0]
+    row = issues.split(f'id="issue-{anchor.id}"', 1)[1].split("</tr>", 1)[0]
     assert "AI explanation" in row
     assert f">{note.id}</a>" in row
     assert f'id="issue-{note.id}"' not in page
