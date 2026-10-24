@@ -24,13 +24,22 @@ Static inspection does not prove runtime behavior. Reports say so.
 
 ## Report page
 
-The report shows what the run recorded and says "Not recorded" or "Not mapped" for the rest. These need backend data that does not exist yet:
-
-- No deployment approval workflow. The human decision is always "Not recorded"; the page never shows "approved", "rejected", or "on hold".
-- No test-execution records. Recommended tests are suggestions; nothing is shown as verified or test-passed.
-- No mapping from packages to applications or business processes. Business impact is "Not mapped".
-- No per-phase or per-tool-call timestamps. The audit trail lists phases and tool calls in order without times.
-- No reviewer actions, monitoring plans, rollback plans, or escalation contacts.
 - The investigator's private reasoning is filtered from the audit trail using the status activity log, which keeps the last 40 entries. A thought older than that could still appear in a phase line or event.
-- Reports saved before this redesign counted AI notes in their stored severity totals. The page counts deterministic findings only and explains the difference when the two disagree.
-- Only the Test and Production connections exist. Other environments named in the redesign brief are not connected.
+- Reports saved before the redesign counted AI notes in their stored severity totals. The page counts deterministic findings only and explains the difference when the two disagree.
+- Monitoring plans, rollback plans, and escalation contacts are not recorded by the analyzer.
+- Reports saved as schema 1.0 have no coverage, per-environment checksums, compilation, or saved policy. Their readiness is Indeterminate, their policy is computed when viewed, and classification shows "not recorded".
+
+## Decision support
+
+- Approval, review, and validation records carry a role and a self-declared name. Development sign-in does not identify a person, so these records are not an audit-grade signature. Enterprise SSO is required before relying on them.
+- Anyone with the approver token is an approver. There is no separation of duties between the person who changes code and the person who approves it.
+- Planned versus unexpected classification is only as good as the manifest and baselines approvers record. With no baseline, Production-only changes cannot be detected, and the page says so.
+- Unclassified changes do not hold deployment. A team that wants every change pinned by the manifest must enforce that outside this application for now.
+- Compilation readiness reads `ALL_OBJECTS` and `ALL_ERRORS` for in-scope packages and direct dependents only. Deeper dependents, and invalid states caused by grants or synonyms outside that set, are not checked.
+- Dependents are found through `ALL_DEPENDENCIES` and the source scan. Callers outside the database remain a coverage gap.
+- SQL performance is not evaluated. `EXPLAIN PLAN` writes to `PLAN_TABLE`, which the read-only policy forbids. A future version could read `V$SQL_PLAN` or AWR with explicit approval.
+- Transaction and data impact is derived from static statement order. It does not prove what happens at run time.
+- Business impact comes only from mappings that approvers enter. Objects without one show "Business impact not established".
+- Regression test tracking stores results that people enter. The application does not run tests or verify evidence links.
+- AUTUMN is optional. When it is not configured, AUTUMN columns and comparisons are omitted and the page says so.
+- Records are JSON files with an in-process lock. Multiple workers or hosts would race.

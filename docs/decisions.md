@@ -51,3 +51,27 @@ Loopback binding plus a shared access token is the Version 1 control. Enterprise
 ## Unquoted identifiers
 
 Lowercase and quoted identifiers are rejected so names can be validated before they are bound. This avoids a class of injection and case-folding surprises.
+
+## Readiness is separate from the analyzer recommendation
+
+The three analyzer labels (Not recommended, Requires further investigation, Eligible for review after testing) are kept unchanged for existing exports and tests. Readiness (Deployment recommended, Deployment on hold, Indeterminate) is a second, policy-driven state that also considers recorded validations, reviewer decisions, drift, coverage, and freshness. A positive readiness never implies approval.
+
+## Unclassified changes do not hold deployment
+
+Holding every difference without a manifest entry would put every existing team on hold on day one, because no manifest exists yet. Only differences that contradict a recorded fact (a trusted baseline or an approved checksum) are unexpected drift and hold deployment. Unclassified changes are counted and shown prominently instead.
+
+## Fix-and-reanalyze blockers cannot be cleared by people
+
+Interface breaks, missing Production objects, compile failures, and snapshot drift are facts about the captured code. A reviewer note does not change them, so only a new analysis can clear them. Transaction hazards need both a passed validation and an accepted review.
+
+## Approval needs a second token
+
+Approvals, baselines, manifest entries, and business mappings change what other people see. They need `OIA_APPROVER_ACCESS_TOKEN`, which must differ from the application token. When it is not set, those actions are disabled rather than open to every user. Validations and reviewer decisions can be recorded by any signed-in user.
+
+## Performance is not evaluated
+
+`EXPLAIN PLAN` writes `PLAN_TABLE`, which conflicts with the read-only rule. Reading cursor caches needs privileges that are not assumed. The report states "not evaluated" with that reason.
+
+## Readiness is recomputed on view, the policy is not
+
+Blocking rules run once when the analysis finishes, so a rule change cannot silently rewrite an old report. Readiness depends on records that change after the run and on the age of the snapshot, so it is evaluated each time the report is shown.
