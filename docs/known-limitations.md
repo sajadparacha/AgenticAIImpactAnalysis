@@ -18,3 +18,16 @@ Static inspection does not prove runtime behavior. Reports say so.
 - PDF layout uses fpdf2 when WeasyPrint’s native libraries are absent. The content matches the report model; the pagination is plain.
 - One process and JSON files. Restarts lose in-flight work that has not been written. Multiple workers would race on run directories.
 - Development authentication is a shared token. It must not be exposed on a network.
+
+## Report page
+
+The report shows what the run recorded and says "Not recorded" or "Not mapped" for the rest. These need backend data that does not exist yet:
+
+- No deployment approval workflow. The human decision is always "Not recorded"; the page never shows "approved", "rejected", or "on hold".
+- No test-execution records. Recommended tests are suggestions; nothing is shown as verified or test-passed.
+- No mapping from packages to applications or business processes. Business impact is "Not mapped".
+- No per-phase or per-tool-call timestamps. The audit trail lists phases and tool calls in order without times.
+- No reviewer actions, monitoring plans, rollback plans, or escalation contacts.
+- The investigator's private reasoning is filtered from the audit trail using the status activity log, which keeps the last 40 entries. A thought older than that could still appear in a phase line or event.
+- Reports saved before this redesign counted AI notes in their stored severity totals. The page counts deterministic findings only and explains the difference when the two disagree.
+- Only the Test and Production connections exist. Other environments named in the redesign brief are not connected.

@@ -25,6 +25,17 @@ browser → controllers → AnalysisService
 
 Controllers do not contain SQL or prompts.
 
+## Report presentation
+
+`services/report_view.py` turns a saved `Report` and its `status.json` into the dictionary the report templates render. It groups, counts, links, and labels what the run recorded. It does not re-run the policy, change a severity, or fill gaps; missing data is returned as an explicit "not recorded" or "not mapped" state.
+
+- Findings behind the recommendation come from the persisted `recommendation_reasons`, not from a second policy pass.
+- Counts cover deterministic findings only. Investigator notes are attached to the finding they review; a note without a deterministic anchor is listed as "AI assessment only" and is never rated or counted.
+- The human deployment decision is always "Not recorded" because no approval is persisted.
+- `initial_state` validates the `tab`, `finding`, `object`, `line`, `side`, and `mode` query parameters against the report, so deep links render the right panel without JavaScript.
+
+`report_body.html` composes six panels (`_report_overview.html`, `_report_findings.html`, `_report_source.html`, `_report_dependencies.html`, `_report_validation.html`, `_report_audit.html`) and a finding drawer (`_finding_detail.html`). The print and PDF-HTML exports reuse the same partials with every panel and finding detail expanded. `app.js` adds tab switching, filters, sorting, the drawer, and URL state as progressive enhancement under a CSP that forbids inline script and style.
+
 ## Pipeline
 
 1. Validate uppercase `OWNER.PACKAGE` names.

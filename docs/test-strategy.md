@@ -11,6 +11,9 @@ Automated tests run with `pytest` and do not need Oracle or a model endpoint.
 | Policy | `tests/test_recommendation.py` | Blocking and conditional outcomes |
 | Regression | `tests/test_regression.py` | 22 change scenarios and their expected recommendation class |
 | Browser slice and investigator | `tests/test_http_and_agent.py` | Both fixture reports, PDF and JSON export, CSRF, citation downgrade, budgets |
+| Report presentation | `tests/test_report_view.py` | Count reconciliation, policy-derived drivers, "Not recorded" human decision, AI-only rows stay unrated, deep-link validation, diff context folding and line links, dependency linking, audit thought filtering, print export completeness, legacy anchors and export links |
+
+Browser checks for the report page are manual: tab keyboard navigation, drawer focus and Escape, Back/Forward state, mode toggle, filters and sorting, a 6,000-line diff, and 900 px tablet width. Screenshots taken from fixture runs are in `docs/redesign/screenshots/`.
 
 A regression scenario builds two fixture catalogs and runs `AnalysisService`. Expectations are recommendation class, finding category, evidence text, or the absence of a breaking flag. They do not assert a percentage.
 
