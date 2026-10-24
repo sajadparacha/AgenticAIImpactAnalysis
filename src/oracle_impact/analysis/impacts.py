@@ -1,8 +1,16 @@
 """Turn snapshots, diffs, signatures, and metadata into evidence-backed findings."""
 
+from oracle_impact.analysis.grants import GrantChange
 from oracle_impact.analysis.hashing import finding_id
 from oracle_impact.analysis.normalize import normalize_plsql
-from oracle_impact.analysis.plsql_scanner import PackageScan, RoutineScan, financial_text, scan_package
+from oracle_impact.analysis.plsql_scanner import (
+    PackageScan,
+    RoutineScan,
+    authid_clause,
+    error_declarations,
+    financial_text,
+    scan_package,
+)
 from oracle_impact.analysis.signatures import SignatureChange
 from oracle_impact.models.domain import Snapshot, TableMetadata
 from oracle_impact.models.enums import Confidence, EvidenceStatus, Severity
@@ -27,11 +35,14 @@ def build_deterministic_findings(
     table_lookup,
     dependency_gaps: list[str],
     drift_objects: list[str],
+    grant_changes: list[GrantChange] | None = None,
 ) -> list[Finding]:
     findings: list[Finding] = []
     formatting = _formatting_packages(diffs)
     for change in signature_changes:
         findings.append(_signature_finding(run_id, snapshot, change))
+    for change in grant_changes or []:
+        findings.append(_grant_finding(run_id, snapshot, change))
     if dependency_gaps:
         for gap in dependency_gaps:
             findings.append(_gap_finding(run_id, gap))
@@ -43,6 +54,7 @@ def build_deterministic_findings(
         if f"{owner}.{name}" in formatting:
             findings.append(_format_finding(run_id, snapshot, owner, name, diffs))
             continue
+        findings.extend(_package_contract_findings(run_id, snapshot, owner, name))
         test_body = scans.get(("test", owner, name))
         prod_body = scans.get(("production", owner, name))
         if test_body is None and prod_body is None:
@@ -366,6 +378,12 @@ def _routine_findings(
     if test_swallowed != prod_swallowed:
         findings.append(_exception_finding(run_id, snapshot, owner, name, routine, prod, added=bool(test_swallowed - prod_swallowed)))
 
+    if prod is not None:
+        test_codes = {code for _, code in routine.error_codes}
+        prod_codes = {code for _, code in prod.error_codes}
+        if test_codes != prod_codes:
+            findings.append(_error_code_finding(run_id, snapshot, owner, name, routine, prod, test_codes, prod_codes))
+
     dynamic_changed = [
         line for line in routine.dynamic_lines if line in changed_test_lines or prod is None
     ]
@@ -616,6 +634,209 @@ def _logic_finding(run_id, snapshot, owner, name, routine, lines: list[int]) -> 
         recommended_action="Read the changed branch with a developer who knows the business rule and test it.",
         proposed_tests=[f"Add a functional test that exercises {routine.name} with the new branch."],
         attributes=attributes,
+    )
+
+
+def _error_code_finding(run_id, snapshot, owner, name, routine, prod, test_codes: set[str], prod_codes: set[str]) -> Finding:
+    removed = sorted(prod_codes - test_codes)
+    added = sorted(test_codes - prod_codes)
+    parts = []
+    if removed:
+        parts.append(f"no longer raises error code {', '.join(removed)}")
+    if added:
+        parts.append(f"now raises error code {', '.join(added)}")
+    detail = f"{routine.name} {' and '.join(parts)} through RAISE_APPLICATION_ERROR."
+    if removed:
+        severity = Severity.HIGH
+        explanation = detail + " Callers, client code, or monitoring that handle the removed code will no longer receive it."
+        action = "Find every caller and alert rule that handles the removed error code and agree the new behavior with their owners."
+    else:
+        severity = Severity.LOW
+        explanation = detail + " Callers that do not expect the new code receive it as an unhandled error."
+        action = "Confirm that callers handle the new error code."
+    return _base_finding(
+        run_id,
+        snapshot,
+        owner,
+        name,
+        changed_lines_test=[line for line, code in routine.error_codes if code in added],
+        corresponding_lines_prod=[line for line, code in prod.error_codes if code in removed],
+        change_category="error_contract",
+        evidence=detail,
+        severity=severity,
+        confidence=Confidence.HIGH,
+        status=EvidenceStatus.CONFIRMED,
+        explanation=explanation,
+        recommended_action=action,
+        proposed_tests=[f"Trigger each error path in {routine.name} and check the error code the caller receives."],
+        attributes={"error_contract": "removed" if removed else "added"},
+    )
+
+
+def _package_contract_findings(run_id, snapshot, owner, name) -> list[Finding]:
+    findings: list[Finding] = []
+    test_spec = snapshot.text("test", owner, name, "PACKAGE")
+    prod_spec = snapshot.text("production", owner, name, "PACKAGE")
+    if test_spec and prod_spec:
+        test_authid, test_line = authid_clause(test_spec)
+        prod_authid, prod_line = authid_clause(prod_spec)
+        if test_authid != prod_authid:
+            findings.append(_authid_finding(run_id, snapshot, owner, name, test_authid, test_line, prod_authid, prod_line))
+        test_public = error_declarations(test_spec).exceptions
+        prod_public = error_declarations(prod_spec).exceptions
+        if set(test_public) != set(prod_public):
+            findings.append(_public_exception_finding(run_id, snapshot, owner, name, test_public, prod_public))
+    for object_type in ("PACKAGE", "PACKAGE BODY"):
+        test_source = snapshot.text("test", owner, name, object_type)
+        prod_source = snapshot.text("production", owner, name, object_type)
+        if not test_source or not prod_source:
+            continue
+        test_inits = error_declarations(test_source).exception_inits
+        prod_inits = error_declarations(prod_source).exception_inits
+        changes = []
+        for exception, (code, _line) in sorted(prod_inits.items()):
+            if exception not in test_inits:
+                changes.append(f"{exception} no longer maps to {code}")
+            elif test_inits[exception][0] != code:
+                changes.append(f"{exception} now maps to {test_inits[exception][0]} instead of {code}")
+        if changes:
+            findings.append(
+                _base_finding(
+                    run_id,
+                    snapshot,
+                    owner,
+                    name,
+                    object_type=object_type,
+                    changed_lines_test=[line for exception, (_code, line) in test_inits.items() if exception in prod_inits],
+                    corresponding_lines_prod=[line for _code, line in prod_inits.values()],
+                    change_category="error_contract",
+                    evidence="PRAGMA EXCEPTION_INIT changed: " + "; ".join(changes) + ".",
+                    severity=Severity.HIGH,
+                    confidence=Confidence.HIGH,
+                    status=EvidenceStatus.CONFIRMED,
+                    explanation=(
+                        "PRAGMA EXCEPTION_INIT changed: " + "; ".join(changes) + ". "
+                        "Handlers that catch these named exceptions will catch a different Oracle error, or none."
+                    ),
+                    recommended_action="Review every handler for these exceptions and confirm which Oracle error each should catch.",
+                    proposed_tests=["Raise the original Oracle error and confirm the expected handler still runs."],
+                    attributes={"error_contract": "exception_init"},
+                )
+            )
+    return findings
+
+
+def _authid_finding(run_id, snapshot, owner, name, test_authid, test_line, prod_authid, prod_line) -> Finding:
+    detail = f"{owner}.{name} AUTHID changed from {prod_authid} to {test_authid}."
+    if test_authid == "CURRENT_USER":
+        effect = (
+            "The package will run with each caller's privileges and name resolution instead of the owner's. "
+            "Callers without direct access to the objects it uses will fail."
+        )
+    else:
+        effect = (
+            "The package will run with the owner's privileges for every caller. "
+            "Callers gain access to whatever the owner can reach through it, and unqualified names resolve in the owner's schema."
+        )
+    return _base_finding(
+        run_id,
+        snapshot,
+        owner,
+        name,
+        object_type="PACKAGE",
+        changed_lines_test=[test_line] if test_line else [],
+        corresponding_lines_prod=[prod_line] if prod_line else [],
+        change_category="security",
+        evidence=detail,
+        severity=Severity.HIGH,
+        confidence=Confidence.HIGH,
+        status=EvidenceStatus.CONFIRMED,
+        explanation=f"{detail} {effect}",
+        recommended_action="Review the privilege model with the DBA and the security owner before promotion.",
+        proposed_tests=["Call the package as each application account that uses it and confirm every statement still succeeds."],
+        attributes={"authid_changed": True},
+    )
+
+
+def _public_exception_finding(run_id, snapshot, owner, name, test_public: dict[str, int], prod_public: dict[str, int]) -> Finding:
+    removed = sorted(set(prod_public) - set(test_public))
+    added = sorted(set(test_public) - set(prod_public))
+    parts = []
+    if removed:
+        parts.append(f"removed {', '.join(removed)}")
+    if added:
+        parts.append(f"added {', '.join(added)}")
+    detail = f"Public exceptions in the {owner}.{name} specification: {'; '.join(parts)}."
+    if removed:
+        severity = Severity.HIGH
+        explanation = (
+            detail + f" Callers that reference a removed exception as {owner}.{name}.<name> will not compile, "
+            "and their handlers for it stop working."
+        )
+        action = "Find callers that reference the removed exceptions, including code outside the database, before promotion."
+    else:
+        severity = Severity.LOW
+        explanation = detail + " Existing callers are not affected until they choose to handle the new exceptions."
+        action = "Tell caller owners about the new exceptions they can handle."
+    return _base_finding(
+        run_id,
+        snapshot,
+        owner,
+        name,
+        object_type="PACKAGE",
+        changed_lines_test=[test_public[item] for item in added],
+        corresponding_lines_prod=[prod_public[item] for item in removed],
+        change_category="error_contract",
+        evidence=detail,
+        severity=severity,
+        confidence=Confidence.HIGH,
+        status=EvidenceStatus.CONFIRMED,
+        explanation=explanation,
+        recommended_action=action,
+        proposed_tests=["Compile every caller of the package in Test."],
+        attributes={"error_contract": "public_exception"},
+    )
+
+
+def _grant_finding(run_id, snapshot, change: GrantChange) -> Finding:
+    owner, name = change.package.split(".", 1)
+    listed = "; ".join(change.grants)
+    if change.kind == "missing_in_production":
+        severity = Severity.MEDIUM
+        detail = f"Test has grants on {change.package} that Production does not: {listed}."
+        explanation = (
+            detail + " After deployment those accounts cannot use the package in Production "
+            "unless the grants are part of the release."
+        )
+        action = "Add the missing grants to the release script, or confirm those accounts do not need them in Production."
+        tests = ["After deploying to a Production copy, call the package as each grantee listed."]
+    else:
+        severity = Severity.LOW
+        detail = f"Production has grants on {change.package} that Test does not: {listed}."
+        explanation = (
+            detail + " CREATE OR REPLACE keeps existing grants, but dropping and re-creating the package removes them. "
+            "Test results do not cover those accounts."
+        )
+        action = "Deploy with CREATE OR REPLACE, or re-apply these grants after the deployment."
+        tests = ["After deployment, confirm the listed grants still exist in Production."]
+    if not change.complete:
+        explanation += " Only grants visible to the analysis account were compared."
+    return _base_finding(
+        run_id,
+        snapshot,
+        owner,
+        name,
+        object_type="PACKAGE",
+        change_category="security",
+        affected_object=change.package,
+        evidence=detail,
+        severity=severity,
+        confidence=Confidence.HIGH if change.complete else Confidence.MEDIUM,
+        status=EvidenceStatus.CONFIRMED if change.complete else EvidenceStatus.POTENTIAL,
+        explanation=explanation,
+        recommended_action=action,
+        proposed_tests=tests,
+        attributes={"grant_difference": change.kind},
     )
 
 

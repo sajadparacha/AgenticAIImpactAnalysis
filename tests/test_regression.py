@@ -482,3 +482,153 @@ def test_ai_review_groups_reads_and_rewrites_blind_spots(tmp_path):
     notes = _unreviewed_notes(["F-3", "F-99"], brief)
     assert notes[0].startswith("The AI was not asked about F-99.") and "at most 12 issues" in notes[0]
     assert "did not return a review for F-3." in notes[1]
+
+
+_RAISING_BODY = (
+    "PACKAGE BODY pkg_demo AS PROCEDURE run(p_id IN NUMBER) IS BEGIN\n"
+    "  IF p_id IS NULL THEN\n"
+    "    RAISE_APPLICATION_ERROR(\n"
+    "      {code}, 'missing id');\n"
+    "  END IF;\n"
+    "  UPDATE account SET status = 'A' WHERE id = p_id;\n"
+    "END; END;\n"
+)
+_QUIET_BODY = "PACKAGE BODY pkg_demo AS PROCEDURE run(p_id IN NUMBER) IS BEGIN\n  NULL;\n  UPDATE account SET status = 'A' WHERE id = p_id;\nEND; END;\n"
+_PLAIN_BODY = "PACKAGE BODY pkg_demo AS PROCEDURE run(p_id IN NUMBER) IS BEGIN NULL; END; END;\n"
+
+
+def _only(report, category):
+    found = [finding for finding in report.findings if finding.change_category == category]
+    assert len(found) == 1, [(finding.change_category, finding.evidence) for finding in report.findings]
+    return found[0]
+
+
+def test_removed_error_code_holds_the_recommendation(tmp_path):
+    test_catalog, prod_catalog = _pair(_RAISING_BODY.format(code="-20001"), _QUIET_BODY)
+    report = run_catalogs(tmp_path, ["APP.PKG_DEMO"], test_catalog, prod_catalog)
+    finding = _only(report, "error_contract")
+    assert finding.severity.value == "high" and finding.status.value == "confirmed"
+    assert "no longer raises error code -20001" in finding.evidence
+    assert finding.corresponding_lines_prod == [3]
+    assert report.recommendation == Recommendation.REQUIRES_INVESTIGATION
+    assert any(reason.startswith(finding.id) for reason in report.recommendation_reasons)
+
+
+def test_renumbered_error_code_reports_both_codes(tmp_path):
+    test_catalog, prod_catalog = _pair(_RAISING_BODY.format(code="-20001"), _RAISING_BODY.format(code="- 20002"))
+    report = run_catalogs(tmp_path, ["APP.PKG_DEMO"], test_catalog, prod_catalog)
+    finding = _only(report, "error_contract")
+    assert "no longer raises error code -20001 and now raises error code -20002" in finding.evidence
+    assert finding.severity.value == "high"
+    assert finding.changed_lines_test == [3]
+
+
+def test_added_error_code_is_low_and_does_not_hold_the_recommendation(tmp_path):
+    test_catalog, prod_catalog = _pair(_QUIET_BODY, _RAISING_BODY.format(code="-20001"))
+    report = run_catalogs(tmp_path, ["APP.PKG_DEMO"], test_catalog, prod_catalog)
+    finding = _only(report, "error_contract")
+    assert finding.severity.value == "low" and "now raises error code -20001" in finding.evidence
+    assert report.recommendation == Recommendation.ELIGIBLE_FOR_REVIEW
+
+
+def test_exception_init_change_and_removed_public_exception(tmp_path):
+    prod_spec = (
+        "PACKAGE pkg_demo AS\n  e_busy EXCEPTION;\n  PRAGMA EXCEPTION_INIT(e_busy, -54);\n"
+        "  e_missing EXCEPTION;\n  PROCEDURE run(p_id IN NUMBER);\nEND;\n"
+    )
+    test_spec = "PACKAGE pkg_demo AS\n  e_busy EXCEPTION;\n  PRAGMA EXCEPTION_INIT(e_busy, -60);\n  PROCEDURE run(p_id IN NUMBER);\nEND;\n"
+    test_catalog, prod_catalog = _pair(_PLAIN_BODY, _PLAIN_BODY, prod_spec=prod_spec, test_spec=test_spec)
+    report = run_catalogs(tmp_path, ["APP.PKG_DEMO"], test_catalog, prod_catalog)
+    contract = {finding.attributes["error_contract"]: finding for finding in report.findings if finding.change_category == "error_contract"}
+    assert set(contract) == {"exception_init", "public_exception"}
+    assert "E_BUSY now maps to -60 instead of -54" in contract["exception_init"].evidence
+    assert "removed E_MISSING" in contract["public_exception"].evidence
+    assert contract["public_exception"].corresponding_lines_prod == [4]
+    assert all(finding.severity.value == "high" and finding.object_type == "PACKAGE" for finding in contract.values())
+    assert report.recommendation == Recommendation.REQUIRES_INVESTIGATION
+
+
+def test_authid_change_is_a_confirmed_security_finding(tmp_path):
+    prod_spec = "PACKAGE pkg_demo AS PROCEDURE run(p_id IN NUMBER); END;\n"
+    test_spec = "PACKAGE pkg_demo\n  AUTHID CURRENT_USER\nAS PROCEDURE run(p_id IN NUMBER); END;\n"
+    test_catalog, prod_catalog = _pair(_PLAIN_BODY, _PLAIN_BODY, prod_spec=prod_spec, test_spec=test_spec)
+    report = run_catalogs(tmp_path, ["APP.PKG_DEMO"], test_catalog, prod_catalog)
+    finding = _only(report, "security")
+    assert "AUTHID changed from DEFINER to CURRENT_USER" in finding.evidence
+    assert finding.severity.value == "high" and finding.status.value == "confirmed"
+    assert finding.changed_lines_test == [2] and finding.corresponding_lines_prod == []
+    assert report.recommendation == Recommendation.REQUIRES_INVESTIGATION
+
+    explicit = "PACKAGE pkg_demo AUTHID DEFINER AS PROCEDURE run(p_id IN NUMBER); END;\n"
+    test_catalog, prod_catalog = _pair(_PLAIN_BODY, _PLAIN_BODY, prod_spec=prod_spec, test_spec=explicit)
+    report = run_catalogs(tmp_path / "explicit", ["APP.PKG_DEMO"], test_catalog, prod_catalog)
+    assert not [finding for finding in report.findings if finding.change_category == "security"]
+
+
+def test_grant_missing_in_production_holds_the_recommendation(tmp_path):
+    test_catalog, prod_catalog = _pair(_PLAIN_BODY, _PLAIN_BODY)
+    test_catalog.add_grant("APP", "PKG_DEMO", "BILLING_APP", "EXECUTE")
+    test_catalog.add_grant("APP", "PKG_DEMO", "REPORTING", "EXECUTE")
+    prod_catalog.add_grant("APP", "PKG_DEMO", "REPORTING", "EXECUTE")
+    prod_catalog.add_grant("APP", "PKG_DEMO", "LEGACY_BATCH", "EXECUTE")
+    report = run_catalogs(tmp_path, ["APP.PKG_DEMO"], test_catalog, prod_catalog)
+    grants = {finding.attributes["grant_difference"]: finding for finding in report.findings if finding.change_category == "security"}
+    missing = grants["missing_in_production"]
+    assert missing.severity.value == "medium" and missing.status.value == "confirmed"
+    assert "EXECUTE to BILLING_APP" in missing.evidence and "REPORTING" not in missing.evidence
+    assert grants["missing_in_test"].severity.value == "low" and "LEGACY_BATCH" in grants["missing_in_test"].evidence
+    assert report.recommendation == Recommendation.REQUIRES_INVESTIGATION
+
+
+def test_partial_or_unreadable_grants_are_reported_as_limitations(tmp_path):
+    test_catalog, prod_catalog = _pair(_PLAIN_BODY, _PLAIN_BODY)
+    test_catalog.add_grant("APP", "PKG_DEMO", "BILLING_APP", "EXECUTE")
+    prod_catalog.grants_complete = False
+    report = run_catalogs(tmp_path, ["APP.PKG_DEMO"], test_catalog, prod_catalog)
+    finding = _only(report, "security")
+    assert finding.status.value == "potential" and "Only grants visible" in finding.explanation
+    assert any("ALL_TAB_PRIVS" in item for item in report.limitations)
+
+    test_catalog, prod_catalog = _pair(_PLAIN_BODY, _PLAIN_BODY)
+    test_catalog.add_grant("APP", "PKG_DEMO", "BILLING_APP", "EXECUTE")
+    prod_catalog.inaccessible_grants.add(("APP", "PKG_DEMO"))
+    report = run_catalogs(tmp_path / "hidden", ["APP.PKG_DEMO"], test_catalog, prod_catalog)
+    assert not [finding for finding in report.findings if finding.change_category == "security"]
+    assert any("could not be read in Production" in item for item in report.limitations)
+    assert report.recommendation == Recommendation.ELIGIBLE_FOR_REVIEW
+
+
+def test_grant_read_falls_back_to_all_tab_privs_when_dba_view_is_denied():
+    from types import SimpleNamespace
+
+    import oracledb
+
+    from oracle_impact.infrastructure.oracle.oracledb_gateway import OracledbGateway
+
+    executed = []
+
+    class Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, sql, binds=None):
+            executed.append(sql)
+            if "dba_tab_privs" in sql:
+                raise oracledb.DatabaseError(SimpleNamespace(code=942))
+
+        def fetchall(self):
+            return [("BILLING_APP", "EXECUTE")]
+
+    class Connection(Cursor):
+        def cursor(self):
+            return Cursor()
+
+    gateway = OracledbGateway("test", "TEST", "dsn", "reader", "secret")
+    gateway._dictionary_ready, gateway._dictionary_prefix = True, "dba"
+    gateway._connect = lambda: Connection()
+    fetch = gateway.fetch_grants("APP", "PKG_DEMO")
+    assert fetch.complete is False and fetch.grants == [("BILLING_APP", "EXECUTE")]
+    assert any("all_tab_privs" in sql for sql in executed)

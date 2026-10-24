@@ -38,6 +38,7 @@ CATEGORY_LABELS = {
     "business": "Business rules",
     "data": "Data",
     "transaction": "Transactions",
+    "security": "Security",
     "coverage": "Coverage gap",
     "other": "Other",
 }
@@ -421,6 +422,8 @@ def _category(change_category: str) -> str:
         "data": "data",
         "transaction": "transaction",
         "exception": "transaction",
+        "error_contract": "interface",
+        "security": "security",
         "coverage": "coverage",
     }.get(change_category, "other")
 

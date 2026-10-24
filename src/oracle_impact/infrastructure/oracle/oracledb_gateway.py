@@ -8,6 +8,7 @@ from oracle_impact.analysis.hashing import source_hash
 from oracle_impact.infrastructure.oracle.gateway import (
     ArgumentFetch,
     DependencyFetch,
+    GrantFetch,
     OracleAccessError,
     OracleUnavailable,
     SourceRecord,
@@ -136,6 +137,24 @@ class OracledbGateway:
             for row in rows
         ]
         return ArgumentFetch(arguments=arguments)
+
+    def fetch_grants(self, owner: str, name: str) -> GrantFetch:
+        self._ensure_dictionary_prefix()
+        if self._dictionary_prefix == "dba":
+            try:
+                rows = self._select("object_grants_dba", owner=owner, name=name)
+                return GrantFetch(complete=True, grants=[(row[0], row[1]) for row in rows])
+            except OracleUnavailable:
+                raise
+            except OracleAccessError:
+                pass
+        try:
+            rows = self._select("object_grants", owner=owner, name=name)
+        except OracleUnavailable:
+            raise
+        except OracleAccessError:
+            return GrantFetch(inaccessible=True, complete=False)
+        return GrantFetch(complete=False, grants=[(row[0], row[1]) for row in rows])
 
     def fetch_table(self, owner: str, table: str) -> TableMetadata:
         try:

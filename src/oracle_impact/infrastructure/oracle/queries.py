@@ -97,4 +97,20 @@ WHERE table_owner = :owner
   AND table_name = :table_name
 ORDER BY trigger_name
 """,
+    # ALL_TAB_PRIVS and DBA_TAB_PRIVS name the owner column differently, so the
+    # prefix rewrite cannot be used. The gateway picks one of these two.
+    "object_grants": """
+SELECT grantee, privilege
+FROM all_tab_privs
+WHERE table_schema = :owner
+  AND table_name = :name
+ORDER BY grantee, privilege
+""",
+    "object_grants_dba": """
+SELECT grantee, privilege
+FROM dba_tab_privs
+WHERE owner = :owner
+  AND table_name = :name
+ORDER BY grantee, privilege
+""",
 }

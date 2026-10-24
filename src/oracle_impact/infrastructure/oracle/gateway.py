@@ -53,6 +53,16 @@ class ArgumentFetch:
 
 
 @dataclass
+class GrantFetch:
+    """Object privileges on one object. complete is False when the dictionary only shows
+    grants that involve the connected account (ALL_TAB_PRIVS)."""
+
+    inaccessible: bool = False
+    complete: bool = True
+    grants: list[tuple[str, str]] = field(default_factory=list)
+
+
+@dataclass
 class StoredEdge:
     dependent_owner: str
     dependent_name: str
@@ -93,6 +103,12 @@ class Catalog:
     tables: dict[tuple[str, str], TableMetadata] = field(default_factory=dict)
     inaccessible_tables: set[tuple[str, str]] = field(default_factory=set)
     drift: set[tuple[str, str, str]] = field(default_factory=set)
+    grants: dict[tuple[str, str], list[tuple[str, str]]] = field(default_factory=dict)
+    inaccessible_grants: set[tuple[str, str]] = field(default_factory=set)
+    grants_complete: bool = True
+
+    def add_grant(self, owner: str, name: str, grantee: str, privilege: str) -> None:
+        self.grants.setdefault((owner, name), []).append((grantee, privilege))
 
     def add_source(self, owner: str, name: str, object_type: str, source: str) -> None:
         self.sources[(owner, name, object_type)] = source
@@ -218,6 +234,11 @@ class FixtureGateway:
             return ArgumentFetch(inaccessible=True)
         return ArgumentFetch(arguments=list(self.catalog.arguments.get((owner, package), [])))
 
+    def fetch_grants(self, owner: str, name: str) -> GrantFetch:
+        if (owner, name) in self.catalog.inaccessible_grants:
+            return GrantFetch(inaccessible=True, complete=False)
+        return GrantFetch(complete=self.catalog.grants_complete, grants=list(self.catalog.grants.get((owner, name), [])))
+
     def fetch_table(self, owner: str, table: str) -> TableMetadata:
         if (owner, table) in self.catalog.inaccessible_tables:
             return TableMetadata(owner=owner, name=table, exists=False, inaccessible=True)
@@ -249,6 +270,9 @@ class UnconfiguredGateway:
         raise OracleNotConfigured(self._message)
 
     def fetch_arguments(self, owner: str, package: str) -> ArgumentFetch:
+        raise OracleNotConfigured(self._message)
+
+    def fetch_grants(self, owner: str, name: str) -> GrantFetch:
         raise OracleNotConfigured(self._message)
 
     def fetch_table(self, owner: str, table: str) -> TableMetadata:

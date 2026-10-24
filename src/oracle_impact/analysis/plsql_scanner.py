@@ -26,6 +26,15 @@ _THRESHOLD = re.compile(
     re.IGNORECASE,
 )
 _FINANCIAL = re.compile(r"TAX|RATE|AMOUNT|FEE|PRICE|DISCOUNT|TOTAL", re.IGNORECASE)
+_RAISE_APPLICATION_ERROR = re.compile(
+    r"\bRAISE_APPLICATION_ERROR\s*\(\s*(-?\s*\d+|[A-Z][A-Z0-9_$#.]*)", re.IGNORECASE
+)
+_EXCEPTION_INIT = re.compile(
+    r"\bPRAGMA\s+EXCEPTION_INIT\s*\(\s*([A-Z][A-Z0-9_$#]*)\s*,\s*(-?\s*\d+)\s*\)", re.IGNORECASE
+)
+_EXCEPTION_DECLARATION = re.compile(r"\b([A-Z][A-Z0-9_$#]*)\s+EXCEPTION\s*;", re.IGNORECASE)
+_AUTHID = re.compile(r"\bAUTHID\s+(CURRENT_USER|DEFINER)\b", re.IGNORECASE)
+_HEADER_END = re.compile(r"\b(IS|AS)\b", re.IGNORECASE)
 _SKIP_TABLES = {"DUAL", "SELECT"}
 
 
@@ -60,6 +69,7 @@ class RoutineScan:
     handler_lines: list[int] = field(default_factory=list)
     thresholds: list[tuple[int, str, str, str]] = field(default_factory=list)
     events: list[tuple[int, int, str]] = field(default_factory=list)
+    error_codes: list[tuple[int, str]] = field(default_factory=list)
 
     @property
     def transaction_sequence(self) -> tuple[str, ...]:
@@ -202,8 +212,52 @@ def scan_package(source: str) -> PackageScan:
                     (line_no, match.group(1).upper(), match.group(2), match.group(3))
                 )
         routines.append(routine)
+    for match in _RAISE_APPLICATION_ERROR.finditer(masked):
+        line_no = line_number(match.start())
+        for routine in routines:
+            if routine.start_line <= line_no <= routine.end_line:
+                routine.error_codes.append((line_no, _error_code(match.group(1))))
+                break
     return PackageScan(routines=routines, masked_lines=lines)
 
 
 def financial_text(text: str) -> bool:
     return bool(_FINANCIAL.search(text))
+
+
+@dataclass
+class ErrorDeclarations:
+    exceptions: dict[str, int] = field(default_factory=dict)
+    exception_inits: dict[str, tuple[str, int]] = field(default_factory=dict)
+
+
+def error_declarations(source: str) -> ErrorDeclarations:
+    """Named exceptions and their PRAGMA EXCEPTION_INIT codes, keyed by upper-case name, with line numbers."""
+    masked = mask_non_code(source)
+    found = ErrorDeclarations()
+    for match in _EXCEPTION_DECLARATION.finditer(masked):
+        found.exceptions.setdefault(match.group(1).upper(), _line_of(masked, match.start()))
+    for match in _EXCEPTION_INIT.finditer(masked):
+        found.exception_inits.setdefault(
+            match.group(1).upper(), (_error_code(match.group(2)), _line_of(masked, match.start()))
+        )
+    return found
+
+
+def authid_clause(spec_source: str) -> tuple[str, int]:
+    """AUTHID of a package specification and its line. Without the clause Oracle uses DEFINER (line 0)."""
+    masked = mask_non_code(spec_source)
+    header_end = _HEADER_END.search(masked)
+    header = masked[: header_end.start()] if header_end else masked
+    match = _AUTHID.search(header)
+    if match is None:
+        return "DEFINER", 0
+    return match.group(1).upper(), _line_of(masked, match.start())
+
+
+def _error_code(token: str) -> str:
+    return re.sub(r"\s+", "", token).upper()
+
+
+def _line_of(text: str, offset: int) -> int:
+    return text.count("\n", 0, offset) + 1

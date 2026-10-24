@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from oracle_impact.analysis.dependencies import discover_dependencies
 from oracle_impact.analysis.diff_engine import build_object_diff
+from oracle_impact.analysis.grants import compare_grants
 from oracle_impact.analysis.impacts import build_deterministic_findings
 from oracle_impact.analysis.plsql_scanner import scan_package
 from oracle_impact.analysis.signatures import compare_package_signatures
@@ -137,6 +138,16 @@ class AnalysisService:
                         callers,
                     )
                 )
+            grant_changes = []
+            grant_notes: list[str] = []
+            for package in packages:
+                changes, notes = compare_grants(
+                    package,
+                    self.test_gateway.fetch_grants(package.owner, package.name),
+                    self.production_gateway.fetch_grants(package.owner, package.name),
+                )
+                grant_changes.extend(changes)
+                grant_notes.extend(note for note in notes if note not in grant_notes)
             gaps = [
                 f"{gap.environment} {gap.owner}.{gap.name} {gap.object_type}: {gap.reason}"
                 for gap in (*prod_out.gaps, *test_out.gaps, *prod_in.gaps)
@@ -157,6 +168,7 @@ class AnalysisService:
                 or self._load_table(env, owner, table, tables),
                 gaps,
                 drift,
+                grant_changes,
             )
 
             self._progress(
@@ -165,7 +177,7 @@ class AnalysisService:
                 f"Deterministic checks produced {len(findings)} findings.",
                 _dependency_lines(prod_out, test_out, prod_in, signature_changes, findings, gaps),
             )
-            limitations = list(snapshot.limitations)
+            limitations = list(snapshot.limitations) + grant_notes
             tool_log: list[dict] = []
             ai_used = False
             model_name = None
