@@ -11,6 +11,9 @@ Static inspection does not prove runtime behavior. Reports say so.
 - Dependency walks stop at depth 2 and omit Oracle-supplied schemas.
 - Signature compatibility for coordinated edits is a source heuristic: a selected caller is treated as updated when the new parameter name appears in its Test source. That can be fooled by a comment or an unused mention, and it cannot prove a type change was updated at the call site.
 - An optional appended parameter is treated as backward compatible for positional and named PL/SQL calls. Dynamic callers that build argument lists are not inspected.
+- Error-code comparison reads `RAISE_APPLICATION_ERROR` calls per routine name, so overloads with the same name are merged. A code passed through a constant is compared by the constant's name, not its value. `RAISE` of a named exception is not tracked per routine.
+- `AUTHID` is read from the specification header. Without the clause Oracle's default, `DEFINER`, is assumed.
+- Grant comparison is complete only when the account can read `DBA_TAB_PRIVS`. With `ALL_TAB_PRIVS` it sees only grants that involve the analysis account; such differences are marked potential and the report says so. Grants the package owner needs on objects in other schemas are not checked.
 - Table triggers are listed from dictionary metadata. The report does not prove that a given statement fires them.
 - No row data is read, so volume, data-quality, and financial-result claims stay potential.
 - Investigator hypotheses are not confirmed. A citation that misses the snapshot cannot change the recommendation.

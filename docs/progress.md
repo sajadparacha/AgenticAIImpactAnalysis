@@ -6,7 +6,7 @@ The five-phase build is on `main`. The report redesign is on `feature/enhance-im
 
 Command: `.venv/bin/pytest -q`
 
-Result after the report redesign: **73 passed, 1 warning**.
+Result after the error-contract, `AUTHID`, and grant checks: **81 passed, 1 warning**.
 
 The warning is Starlette’s deprecation notice that `httpx` test client support is moving to `httpx2`. The tests still run.
 

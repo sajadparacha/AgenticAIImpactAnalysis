@@ -43,7 +43,7 @@ Controllers do not contain SQL or prompts.
 3. Build a side-by-side diff and a normalized comparison.
 4. Compare `ALL_ARGUMENTS` shapes, including overloads, defaults, modes, and types.
 5. Walk dependencies to a depth of 2 in both directions, skipping Oracle-supplied schemas.
-6. Classify SQL, transaction, exception, dynamic SQL, and business-rule changes.
+6. Classify SQL, transaction, exception, dynamic SQL, and business-rule changes. Compare the error contract (`RAISE_APPLICATION_ERROR` codes per routine, public exceptions, `PRAGMA EXCEPTION_INIT` codes), the `AUTHID` clause, and object grants on each package.
 7. Apply the recommendation policy in code.
 8. If egress is enabled, one investigator may call `get_package_source`, `get_dependencies`, `get_object_source`, `get_table_metadata`, and `get_procedure_arguments`.
 9. Validate citations. Investigator output cannot remain confirmed.
@@ -72,6 +72,7 @@ Fixed queries in `infrastructure/oracle/queries.py` use bind variables against:
 - `ALL_CONSTRAINTS`
 - `ALL_CONS_COLUMNS`
 - `ALL_TRIGGERS`
+- `ALL_TAB_PRIVS`, or `DBA_TAB_PRIVS` when the account can read it
 
 `DBA_*` views are not required. Each live call starts with `SET TRANSACTION READ ONLY`.
 

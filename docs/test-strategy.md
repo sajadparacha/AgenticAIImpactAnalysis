@@ -9,7 +9,7 @@ Automated tests run with `pytest` and do not need Oracle or a model endpoint.
 | Diff and names | `tests/test_diff.py` | Line alignment, formatting-only normalization, identifier rejection |
 | Signatures | `tests/test_signatures.py` | Optional suffix versus mandatory parameter with an external caller |
 | Policy | `tests/test_recommendation.py` | Blocking and conditional outcomes |
-| Regression | `tests/test_regression.py` | 22 change scenarios and their expected recommendation class |
+| Regression | `tests/test_regression.py` | 30 change scenarios and their expected recommendation class |
 | Browser slice and investigator | `tests/test_http_and_agent.py` | Both fixture reports, PDF and JSON export, CSRF, citation downgrade, budgets |
 | Report presentation | `tests/test_report_view.py` | Count reconciliation, policy-derived drivers, "Not recorded" human decision, AI-only rows stay unrated, deep-link validation, diff context folding and line links, dependency linking, audit thought filtering, print export completeness, legacy anchors and export links |
 
@@ -41,6 +41,14 @@ The 22 scenarios are:
 20. Parameter type change
 21. Parameter mode change
 22. Removed exception handler
+23. Removed `RAISE_APPLICATION_ERROR` code (holds the recommendation)
+24. Renumbered error code, written across lines
+25. Added error code only (low, does not hold)
+26. Changed `PRAGMA EXCEPTION_INIT` and removed public exception
+27. `AUTHID` change, and explicit `DEFINER` matching the default
+28. Grant present in Test but missing in Production, and the reverse
+29. Partial (`ALL_TAB_PRIVS`) and unreadable grants
+30. Live gateway falls back from `DBA_TAB_PRIVS` to `ALL_TAB_PRIVS`
 
 High-risk scenarios in this list are expected to finish as “not recommended” or “requires further investigation”. None of them finish as eligible for review.
 
