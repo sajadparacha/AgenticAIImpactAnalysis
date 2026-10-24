@@ -1,0 +1,35 @@
+{% macro sev(level, label) -%}
+<span class="sev sev-{{ level or 'none' }}">{{ label or "None" }}</span>
+{%- endmacro %}
+
+{% macro source(key, label) -%}
+<span class="src src-{{ key }}">{{ label }}</span>
+{%- endmacro %}
+
+{% macro evidence(key, label) -%}
+<span class="ev ev-{{ key }}">{{ label }}</span>
+{%- endmacro %}
+
+{% macro kind(key) -%}
+{%- if key == 'ai' -%}
+<span class="kind kind-ai">AI-generated</span>
+{%- elif key == 'verified' -%}
+<span class="kind kind-verified">Test-verified</span>
+{%- elif key == 'policy' -%}
+<span class="kind kind-det">Recommendation policy</span>
+{%- else -%}
+<span class="kind kind-det">Deterministic</span>
+{%- endif -%}
+{%- endmacro %}
+
+{% macro finding_href(view, id) -%}
+{{ view.base_url }}?tab=findings&amp;finding={{ id | urlencode }}
+{%- endmacro %}
+
+{% macro diff_href(view, link) -%}
+{{ view.base_url }}?tab=source&amp;object={{ link.key | urlencode }}{% if link.line %}&amp;line={{ link.line }}&amp;side={{ link.side }}{% endif %}
+{%- endmacro %}
+
+{% macro panel_attrs(state, key, print_mode) -%}
+role="tabpanel" aria-labelledby="tab-{{ key }}" data-panel="{{ key }}" tabindex="-1"{% if not print_mode and state.tab != key %} hidden{% endif %}
+{%- endmacro %}

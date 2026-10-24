@@ -1,0 +1,94 @@
+{% import "_report_macros.html" as ui %}
+{% set f = row.finding %}
+<article class="detail" id="detail-{{ row.id }}" data-detail="{{ row.id }}" aria-labelledby="detail-{{ row.id }}-title"{% if not print_mode and state.finding != row.id %} hidden{% endif %}>
+  <header class="detail-head">
+    <p class="chips">{{ ui.sev(row.level, row.level_label) }} {{ ui.source(row.source, row.source_label) }}{% if row.driver %} <span class="driver">{{ row.driver_label }}</span>{% endif %}</p>
+    <h3 id="detail-{{ row.id }}-title" tabindex="-1">{{ row.headline }}</h3>
+    <p class="row-meta">{{ row.id }} · {{ row.category_label }} · {% if row.object %}<code>{{ row.object }}</code> ({{ row.object_type | lower }}){% else %}Object not identified{% endif %}</p>
+  </header>
+
+  <div class="block block-observed">
+    <h4><span class="block-no">1</span> Observed evidence {{ ui.kind('det') }}</h4>
+    {% if row.source == 'ai' %}
+    <p>No deterministic evidence. This item comes only from the AI investigator and did not match a deterministic finding. Treat it as a lead to check, not a fact.</p>
+    {% else %}
+    <p class="evidence-text">{{ f.evidence }}</p>
+    <dl class="kv">
+      <div><dt>Evidence ID</dt><dd><code>{{ row.id }}</code></dd></div>
+      <div><dt>Evidence status</dt><dd>{{ ui.evidence(row.evidence_status, row.evidence_label) }}</dd></div>
+      <div><dt>Confidence</dt><dd>{{ row.confidence | capitalize }} <span class="hint">(qualitative)</span></dd></div>
+      <div><dt>Captured from</dt><dd>{{ f.source_database | capitalize }}</dd></div>
+      {% if f.changed_lines_test %}
+      <div class="dev-only"><dt>Lines in Test</dt><dd>
+        {% for line in f.changed_lines_test %}{% if row.diff_link %}<a href="{{ view.base_url }}?tab=source&amp;object={{ row.diff_link.key | urlencode }}&amp;line={{ line }}&amp;side=t" data-goto-line="{{ row.diff_link.key }}|t|{{ line }}">{{ line }}</a>{% else %}{{ line }}{% endif %}{{ ', ' if not loop.last }}{% endfor %}
+      </dd></div>
+      {% endif %}
+      {% if f.corresponding_lines_prod %}
+      <div class="dev-only"><dt>Lines in Production</dt><dd>
+        {% for line in f.corresponding_lines_prod %}{% if row.diff_link %}<a href="{{ view.base_url }}?tab=source&amp;object={{ row.diff_link.key | urlencode }}&amp;line={{ line }}&amp;side=p" data-goto-line="{{ row.diff_link.key }}|p|{{ line }}">{{ line }}</a>{% else %}{{ line }}{% endif %}{{ ', ' if not loop.last }}{% endfor %}
+      </dd></div>
+      {% endif %}
+      {% if row.affected_object %}<div><dt>Affected object</dt><dd><code>{{ row.affected_object }}</code></dd></div>{% endif %}
+      {% if f.dependency_path %}<div class="kv-wide"><dt>Call path</dt><dd>{% for step in f.dependency_path %}<code>{{ step }}</code>{{ ' · ' if not loop.last }}{% endfor %}</dd></div>{% endif %}
+      {% if f.version_hash %}<div class="kv-wide dev-only"><dt>Version hash</dt><dd><code class="hash">{{ f.version_hash }}</code></dd></div>{% endif %}
+    </dl>
+    {% endif %}
+  </div>
+
+  <div class="block block-ai">
+    <h4><span class="block-no">2</span> AI interpretation {{ ui.kind('ai') }}</h4>
+    {% if row.source == 'ai' %}
+    {% if row.ai_explanation %}<p>{{ row.ai_explanation }}</p>{% endif %}
+    {% if f.evidence and f.evidence.split() != row.ai_explanation.split() %}<p class="hint">What the model looked at: {{ f.evidence }}</p>{% endif %}
+    {% if row.ai_unchecked %}<p class="hint">Not checked: {{ row.ai_unchecked }}</p>{% endif %}
+    {% for flag in row.ai_flags %}<p class="notice notice-warning">{{ flag }}</p>{% endfor %}
+    <p class="hint">Note <a href="/analyses/{{ view.run_id }}/findings/{{ row.id }}">{{ row.id }}</a>{% if view.ai.model %} · {{ view.ai.model }}{% endif %}</p>
+    {% elif row.note_id %}
+    <p>{{ row.ai_explanation }}</p>
+    {% if row.ai_unchecked %}<p class="hint">Not checked: {{ row.ai_unchecked }}</p>{% endif %}
+    {% for flag in row.ai_flags %}<p class="notice notice-warning">{{ flag }}</p>{% endfor %}
+    <p class="hint">Note <a href="/analyses/{{ view.run_id }}/findings/{{ row.note_id }}">{{ row.note_id }}</a> explains evidence {{ row.id }}{% if view.ai.model %} · {{ view.ai.model }}{% endif %}</p>
+    {% elif row.ai_reviewed %}
+    <p class="hint">The AI reviewed this finding and reached the same conclusion. It added no separate explanation.</p>
+    {% elif view.ai.used %}
+    <p class="hint">The AI investigator did not review this finding.</p>
+    {% else %}
+    <p class="hint">The AI investigator did not run for this report.</p>
+    {% endif %}
+    <p class="caveat">AI text is an interpretation, not tested behavior. It cannot confirm a finding or change its severity or the recommendation.</p>
+  </div>
+
+  <div class="block block-verify">
+    <h4><span class="block-no">3</span> Verification status</h4>
+    <p><strong>Verification not recorded.</strong> This application does not record test runs or reviewer sign-off.</p>
+    {% if row.source != 'ai' %}<p class="hint">Static evidence: {{ row.evidence_label | lower }}.</p>{% endif %}
+  </div>
+
+  <div class="block block-next">
+    <h4><span class="block-no">4</span> Recommended investigation</h4>
+    {% if row.recommended_action %}
+    <p><span class="attrib">Analyzer rule</span> {{ row.recommended_action }}</p>
+    {% endif %}
+    {% if row.proposed_tests or row.ai_todo %}
+    <ul class="step-list-plain">
+      {% for test in row.proposed_tests %}<li><span class="attrib">Analyzer rule</span> {{ test }}</li>{% endfor %}
+      {% if row.ai_todo and row.ai_todo not in row.proposed_tests %}<li><span class="attrib attrib-ai">AI suggestion, review before use</span> {{ row.ai_todo }}</li>{% endif %}
+    </ul>
+    {% endif %}
+    {% if not row.recommended_action and not row.proposed_tests and not row.ai_todo %}<p class="hint">No investigation steps were recorded.</p>{% endif %}
+    <ul class="link-list">
+      {% if row.diff_link %}
+      <li><a href="{{ ui.diff_href(view, row.diff_link) }}" data-goto-line="{{ row.diff_link.key }}|{{ row.diff_link.side }}|{{ row.diff_link.line or '' }}">Open source diff: {{ row.diff_link.label }}</a></li>
+      {% elif row.source != 'ai' %}
+      <li class="hint">No captured source diff for {{ row.object }}.</li>
+      {% endif %}
+      {% for dep in row.dependencies %}
+      <li><a href="{{ view.base_url }}?tab=dependencies#{{ dep.dom_id }}" data-goto-dep="{{ dep.dom_id }}">Dependency: {{ dep.label }}</a> <span class="hint">{{ dep.direction | lower }}</span></li>
+      {% endfor %}
+      {% if row.snippets %}
+      <li><a href="/analyses/{{ view.run_id }}/findings/{{ row.id }}">{{ row.snippets }} SQL test script{{ 's' if row.snippets != 1 }} to run in Test</a></li>
+      {% endif %}
+      <li><a href="/analyses/{{ view.run_id }}/findings/{{ row.id }}">Open the full finding page</a></li>
+    </ul>
+  </div>
+</article>

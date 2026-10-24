@@ -1,0 +1,200 @@
+{% import "_report_macros.html" as ui %}
+<section class="rv-panel" id="overview" {{ ui.panel_attrs(state, 'overview', print_mode) }}>
+  <h2 class="{{ '' if print_mode else 'sr-only' }}">Overview</h2>
+  <div class="overview-grid">
+    <div class="overview-main">
+
+      <section class="card support-only" aria-labelledby="support-summary">
+        <h3 id="support-summary">Plain-language risk summary</h3>
+        {% set serious = m.severity | selectattr('level', 'in', ['critical', 'high']) | map(attribute='count') | sum %}
+        <p>
+          {% if m.findings %}
+          The analyzer recorded {{ m.findings }} finding{{ 's' if m.findings != 1 }}{% if serious %}, {{ serious }} of them critical or high{% endif %}.
+          {% else %}
+          The analyzer recorded no findings.
+          {% endif %}
+          Its recommendation is <strong>{{ rec.label | lower }}</strong>. No one has approved or rejected this change in this application.
+        </p>
+        {% if view.top_findings %}
+        <h4>What could go wrong</h4>
+        <ul class="plain-list">
+          {% for row in view.top_findings %}
+          <li>
+            {{ ui.sev(row.level, row.level_label) }} {{ row.headline }}
+            <span class="hint">{% if row.evidence_status == 'confirmed' %}The change is confirmed in the source. The runtime effect has not been tested.{% else %}Possible effect, a hypothesis that has not been tested.{% endif %}</span>
+          </li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+        <dl class="facts">
+          <div><dt>Affected applications and business processes</dt><dd>Business impact not mapped. This report has no mapping from packages to applications or business processes.</dd></div>
+          <div><dt>Monitoring and rollback</dt><dd>Not recorded by the analyzer.</dd></div>
+          <div><dt>Escalation contacts</dt><dd>Not recorded by the analyzer.</dd></div>
+          <div><dt>Readiness</dt><dd>Analyzer: {{ rec.label }}. Human decision: {{ view.human_decision.label | lower }}. Test results: not recorded.</dd></div>
+        </dl>
+      </section>
+
+      <section class="card" aria-labelledby="top-findings">
+        <div class="card-head">
+          <h3 id="top-findings">Findings behind this recommendation {% if m.drivers %}<span class="count-chip">{{ m.drivers }}</span>{% endif %}</h3>
+          <a href="{{ view.base_url }}?tab=findings" data-goto-tab="findings">View all findings →</a>
+        </div>
+        {% if view.top_findings %}
+        <div class="table-scroll">
+          <table class="data-table compact">
+            <thead><tr><th scope="col">Severity</th><th scope="col">Finding</th><th scope="col">Object</th><th scope="col">Evidence</th><th scope="col"><span class="sr-only">Details</span></th></tr></thead>
+            <tbody>
+              {% for row in view.top_findings %}
+              <tr>
+                <td>{{ ui.sev(row.level, row.level_label) }}</td>
+                <td><span class="row-title">{{ row.headline }}</span><span class="row-meta">{{ row.id }} · {{ row.category_label }}{% if row.note_id %} · AI note{% endif %}</span></td>
+                <td><code class="obj">{{ row.object }}</code><span class="row-meta dev-only">{{ row.object_type | lower }}{% if row.where %} · {{ row.where }}{% endif %}</span></td>
+                <td>{{ ui.evidence(row.evidence_status, row.evidence_label) }}</td>
+                <td><a class="btn-sm" href="{{ ui.finding_href(view, row.id) }}" data-open-finding="{{ row.id }}">Details<span class="sr-only"> for {{ row.id }}</span></a></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% if m.drivers > view.top_findings | length %}<p class="hint">Showing the {{ view.top_findings | length }} most severe of {{ m.drivers }}. <a href="{{ view.base_url }}?tab=findings&amp;drivers=1" data-goto-tab="findings" data-filter-drivers>Show all of them</a>.</p>{% endif %}
+        {% else %}
+        <p class="empty">No finding drives this recommendation. {% for item in rec.reasons if not item.id %}{{ item.text }} {% endfor %}</p>
+        {% endif %}
+      </section>
+
+      <section class="card" aria-labelledby="required-actions">
+        <div class="card-head">
+          <h3 id="required-actions">Required actions before deployment</h3>
+          {{ ui.kind('policy') }}
+        </div>
+        {% if view.required_actions %}
+        <ol class="action-list">
+          {% for action in view.required_actions[:5] %}<li>{{ action }}</li>{% endfor %}
+        </ol>
+        {% if view.required_actions | length > 5 %}
+        <details class="disclosure"{% if print_mode %} open{% endif %}>
+          <summary>{{ view.required_actions | length - 5 }} more required action{{ 's' if view.required_actions | length - 5 != 1 }}</summary>
+          <ol class="action-list" start="6">
+            {% for action in view.required_actions[5:] %}<li>{{ action }}</li>{% endfor %}
+          </ol>
+        </details>
+        {% endif %}
+        {% else %}
+        <p class="empty">The recommendation policy recorded no actions.</p>
+        {% endif %}
+        {% if view.suggested_checks %}
+        <h4>Suggested checks for those findings</h4>
+        <ul class="check-list">
+          {% for check in view.suggested_checks %}
+          <li>
+            <span class="check-head">{{ ui.sev(check.level, check.level_label) }} <a href="{{ ui.finding_href(view, check.finding_id) }}" data-open-finding="{{ check.finding_id }}">{{ check.finding_id }}</a> {{ ui.kind('ai' if check.from_ai else 'det') }}</span>
+            <span>{{ check.text }}</span>
+          </li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+        <p class="hint">This report does not track whether actions are done. Nothing here is marked complete.</p>
+      </section>
+
+      <section class="card dev-only" aria-labelledby="changed-objects">
+        <div class="card-head">
+          <h3 id="changed-objects">Changed objects <span class="count-chip">{{ view.counts.changed_objects }}</span></h3>
+          <a href="{{ view.base_url }}?tab=source" data-goto-tab="source">Open source comparison →</a>
+        </div>
+        {% set changed = view.diffs | rejectattr('state', 'equalto', 'unchanged') | list %}
+        {% if changed %}
+        <div class="table-scroll">
+          <table class="data-table compact">
+            <thead><tr><th scope="col">Object</th><th scope="col">Type</th><th scope="col">Change</th><th scope="col">Lines</th><th scope="col">Highest finding</th><th scope="col"><span class="sr-only">Diff</span></th></tr></thead>
+            <tbody>
+              {% for diff in changed %}
+              <tr>
+                <td><code class="obj">{{ diff.label }}</code></td>
+                <td>{{ diff.object_type | lower }}</td>
+                <td>{{ diff.state_label }}</td>
+                <td><span class="plus">+{{ diff.added }}</span> <span class="minus">−{{ diff.removed }}</span></td>
+                <td>{% if diff.level %}{{ ui.sev(diff.level, diff.level | capitalize) }} <span class="hint">{{ diff.findings | length }} linked</span>{% else %}<span class="hint">None linked</span>{% endif %}</td>
+                <td><a class="btn-sm" href="{{ view.base_url }}?tab=source&amp;object={{ diff.key | urlencode }}" data-open-object="{{ diff.key }}">View diff<span class="sr-only"> for {{ diff.label }} {{ diff.object_type | lower }}</span></a></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="empty">No compared object changed.</p>
+        {% endif %}
+        {% set unchanged = view.diffs | selectattr('state', 'equalto', 'unchanged') | list %}
+        {% if unchanged %}<p class="hint">{{ unchanged | length }} compared object{{ 's' if unchanged | length != 1 }} unchanged.</p>{% endif %}
+      </section>
+    </div>
+
+    <aside class="overview-side">
+      <section class="card" aria-labelledby="risk-distribution">
+        <h3 id="risk-distribution">Risk distribution</h3>
+        {% set total = m.findings %}
+        {% if total %}
+        <svg class="stack-bar" viewBox="0 0 300 18" role="img" aria-labelledby="risk-bar-title">
+          <title id="risk-bar-title">Findings by severity: {% for item in m.severity %}{{ item.count }} {{ item.label | lower }}{{ ', ' if not loop.last }}{% endfor %}</title>
+          {% set ns = namespace(x=0) %}
+          {% for item in m.severity if item.count %}
+          {% set width = (item.count / total * 300) %}
+          <rect class="seg seg-{{ item.level }}" x="{{ ns.x | round(2) }}" y="0" width="{{ width | round(2) }}" height="18"/>
+          {% set ns.x = ns.x + width %}
+          {% endfor %}
+        </svg>
+        <ul class="legend">
+          {% for item in m.severity %}
+          <li class="{{ 'is-zero' if not item.count }}"><span class="dot dot-{{ item.level }}" aria-hidden="true"></span>{{ item.label }}<span>{{ item.count }}{% if item.count %} <small>({{ (item.count / total * 100) | round | int }}%)</small>{% endif %}</span></li>
+          {% endfor %}
+        </ul>
+        <p class="hint">Deterministic findings only. {{ m.ai_notes_attached }} carry an AI note{% if m.ai_only %}; {{ m.ai_only }} AI-only note{{ 's' if m.ai_only != 1 }} are not counted{% endif %}.</p>
+        {% else %}
+        <p class="empty">No deterministic findings were recorded.</p>
+        {% endif %}
+      </section>
+
+      <section class="card" aria-labelledby="affected-packages">
+        <h3 id="affected-packages">Affected objects</h3>
+        <div class="table-scroll">
+        <table class="data-table compact">
+          <thead><tr><th scope="col">Object</th><th scope="col">Findings</th><th scope="col">Highest</th></tr></thead>
+          <tbody>
+            {% for item in view.packages %}
+            <tr>
+              <td><code class="obj">{{ item.name }}</code>{% if item.added is not none %}<span class="row-meta"><span class="plus">+{{ item.added }}</span> <span class="minus">−{{ item.removed }}</span></span>{% else %}<span class="row-meta">Not a selected package</span>{% endif %}</td>
+              <td>{{ item.findings }}</td>
+              <td>{% if item.level %}{{ ui.sev(item.level, item.level_label) }}{% else %}<span class="hint">None</span>{% endif %}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="unverified">
+        <h3 id="unverified">What remains unverified</h3>
+        {% set u = view.unverified %}
+        <ul class="gap-list">
+          <li><strong>Not recorded</strong> Test execution results</li>
+          <li><strong>{{ u.potential }}</strong> finding{{ 's' if u.potential != 1 }} potential, not confirmed</li>
+          <li><strong>{{ u.unknown }}</strong> finding{{ 's' if u.unknown != 1 }} that could not be checked</li>
+          {% if view.ai.used %}
+          <li><strong>{{ u.unexplained }}</strong> serious finding{{ 's' if u.unexplained != 1 }} the AI did not review</li>
+          <li><strong>{{ u.blind_spots }}</strong> thing{{ 's' if u.blind_spots != 1 }} the AI could not check</li>
+          {% endif %}
+          <li><strong>{{ u.limitations }}</strong> known limitation{{ 's' if u.limitations != 1 }}</li>
+        </ul>
+        <a href="{{ view.base_url }}?tab=validation" data-goto-tab="validation">Review verification gaps →</a>
+      </section>
+
+      <section class="card legend-card" aria-labelledby="read-guide">
+        <h3 id="read-guide">How to read this report</h3>
+        <dl class="facts">
+          <div><dt>{{ ui.kind('det') }}</dt><dd>Computed in Python from the captured source and Oracle metadata. Drives severity and the recommendation.</dd></div>
+          <div><dt>{{ ui.kind('ai') }}</dt><dd>{% if view.ai.used %}Written by {{ view.ai.model or 'the AI investigator' }}. An interpretation, not proof. It cannot change severity or the recommendation.{% else %}The AI investigator did not run for this report. Nothing here is model output.{% endif %}</dd></div>
+          <div><dt>{{ ui.kind('verified') }}</dt><dd>Results of tests that were actually run. None are recorded for this report.</dd></div>
+        </dl>
+      </section>
+    </aside>
+  </div>
+</section>

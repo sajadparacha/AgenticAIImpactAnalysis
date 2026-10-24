@@ -21,6 +21,7 @@ from oracle_impact.models.domain import Snapshot
 from oracle_impact.models.report import Report
 from oracle_impact.security import csrf_token, csrf_valid, issue_session, session_valid, token_matches
 from oracle_impact.services.analysis_service import UnknownModel
+from oracle_impact.services.report_view import build_report_view, initial_state
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 TEMPLATES = Jinja2Templates(directory=str(PACKAGE_ROOT / "views" / "templates"))
@@ -30,6 +31,8 @@ TEMPLATES.env.globals["investigator_notes"] = investigator_notes
 TEMPLATES.env.globals["severity_label"] = severity_label
 TEMPLATES.env.globals["issue_list"] = issue_list
 TEMPLATES.env.globals["ai_sources"] = ai_sources
+TEMPLATES.env.globals["build_report_view"] = build_report_view
+TEMPLATES.env.globals["initial_state"] = initial_state
 SESSION_COOKIE = "oia_session"
 
 
@@ -147,11 +150,9 @@ def install_routes(app: FastAPI) -> None:
         report = _with_snippets(request, run_id)
         if report is None:
             return TEMPLATES.TemplateResponse(request, "missing.html", {"run_id": run_id}, status_code=404)
-        return TEMPLATES.TemplateResponse(
-            request,
-            "report.html",
-            {"report": report, "sections": _sections(report)},
-        )
+        context = _report_context(request, run_id, report)
+        context["state"] = initial_state(context["view"], request.query_params)
+        return TEMPLATES.TemplateResponse(request, "report.html", context)
 
     @app.get("/analyses/{run_id}/findings/{finding_id}", response_class=HTMLResponse)
     def finding_detail(request: Request, run_id: str, finding_id: str):
@@ -175,12 +176,12 @@ def install_routes(app: FastAPI) -> None:
         if format == "json":
             return Response(report.model_dump_json(indent=2), media_type="application/json")
         if format == "html":
-            markup = TEMPLATES.get_template("print.html").render({"report": report, "sections": _sections(report)})
+            markup = TEMPLATES.get_template("print.html").render(_report_context(request, run_id, report))
             return Response(markup, media_type="text/html")
         if format == "pdf":
             from oracle_impact.infrastructure.reports.pdf import render_pdf
 
-            markup = TEMPLATES.get_template("print.html").render({"report": report, "sections": _sections(report)})
+            markup = TEMPLATES.get_template("print.html").render(_report_context(request, run_id, report))
             try:
                 payload = render_pdf(report, markup)
             except Exception:
@@ -242,6 +243,11 @@ def _report(request: Request, run_id: str) -> Report | None:
     if payload is None:
         return None
     return Report.model_validate(payload)
+
+
+def _report_context(request: Request, run_id: str, report: Report) -> dict:
+    view = build_report_view(report, _read(request, run_id, "status.json"))
+    return {"report": report, "sections": _sections(report), "view": view, "state": initial_state(view, {})}
 
 
 def _sections(report: Report) -> dict:

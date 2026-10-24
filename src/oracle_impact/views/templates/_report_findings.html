@@ -1,0 +1,80 @@
+{% import "_report_macros.html" as ui %}
+<section class="rv-panel" id="changes" {{ ui.panel_attrs(state, 'findings', print_mode) }}>
+  <div class="panel-head">
+    <h2>Findings</h2>
+    <p class="hint">One row per finding, most severe first. Severity and evidence status come from the deterministic checks. A purple AI note explains a finding; it does not change its severity or the recommendation.</p>
+  </div>
+  {% if view.rows %}
+  {% if not print_mode %}
+  <div class="toolbar" data-findings-filters role="search" aria-label="Filter findings">
+    <label class="field field-grow"><span>Search</span><input type="search" data-filter="q" placeholder="Finding, object, ID…" autocomplete="off"></label>
+    <label class="field"><span>Severity</span>
+      <select data-filter="sev"><option value="">All</option>{% for item in view.filters.severity %}<option value="{{ item.value }}">{{ item.label }}</option>{% endfor %}</select>
+    </label>
+    <label class="field"><span>Object type</span>
+      <select data-filter="type"><option value="">All</option>{% for item in view.filters.object_type %}<option value="{{ item }}">{{ item | lower }}</option>{% endfor %}</select>
+    </label>
+    <label class="field"><span>Category</span>
+      <select data-filter="cat"><option value="">All</option>{% for item in view.filters.category %}<option value="{{ item.value }}">{{ item.label }}</option>{% endfor %}</select>
+    </label>
+    <label class="field"><span>Source</span>
+      <select data-filter="src"><option value="">All</option>{% for item in view.filters.source %}<option value="{{ item.value }}">{{ item.label }}</option>{% endfor %}</select>
+    </label>
+    <label class="field"><span>Evidence</span>
+      <select data-filter="ev"><option value="">All</option>{% for item in view.filters.evidence %}<option value="{{ item.value }}">{{ item.label }}</option>{% endfor %}</select>
+    </label>
+    <label class="check"><input type="checkbox" data-filter="drivers"> Behind the recommendation</label>
+    <button type="button" class="btn-ghost" data-filter-reset>Reset filters</button>
+  </div>
+  <p class="result-count" data-result-count aria-live="polite">Showing {{ view.rows | length }} of {{ view.rows | length }} findings</p>
+  {% endif %}
+  <p class="hint">Verification not recorded: this application does not record test runs or reviewer sign-off for any finding.</p>
+  <div class="table-scroll">
+    <table class="data-table findings-table" data-findings-table>
+      <caption class="sr-only">Findings. Use the Details button to open evidence, AI interpretation, verification status, and next steps.</caption>
+      <thead>
+        <tr>
+          <th scope="col" aria-sort="ascending"><button type="button" class="sort" data-sort="rank">Severity</button></th>
+          <th scope="col"><button type="button" class="sort" data-sort="id">Finding</button></th>
+          <th scope="col"><button type="button" class="sort" data-sort="object">Affected object</button></th>
+          <th scope="col">Source</th>
+          <th scope="col"><button type="button" class="sort" data-sort="evidence">Evidence</button></th>
+          <th scope="col"><span class="sr-only">Details</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in view.rows %}
+        <tr id="{{ row.dom_id }}" class="frow lvl-{{ row.level }}" data-row data-id="{{ row.id }}" data-rank="{{ loop.index0 }}"
+            data-sev="{{ row.level }}" data-type="{{ row.object_type }}" data-cat="{{ row.category }}" data-src="{{ row.source }}"
+            data-ev="{{ row.evidence_status }}" data-drivers="{{ '1' if row.driver else '' }}" data-object="{{ row.object }}" data-search="{{ row.search }}">
+          <td>{{ ui.sev(row.level, row.level_label) }}</td>
+          <td>
+            <span class="row-title">{{ row.headline }}</span>
+            <span class="row-meta"><a href="/analyses/{{ view.run_id }}/findings/{{ row.id }}">{{ row.id }}</a> · {{ row.category_label }}{% if row.driver %} · <span class="driver">{{ row.driver_label }}</span>{% endif %}</span>
+            {% if row.note_id and row.source != 'ai' %}
+            <span class="ai-inline">AI explanation · <a href="/analyses/{{ view.run_id }}/findings/{{ row.note_id }}">{{ row.note_id }}</a></span>
+            {% endif %}
+          </td>
+          <td>
+            {% if row.object %}<code class="obj">{{ row.object }}</code>{% else %}<span class="hint">Object not identified</span>{% endif %}
+            <span class="row-meta dev-only">{{ row.object_type | lower }}{% if row.where %} · {{ row.where }}{% endif %}</span>
+            {% if row.affected_object and row.affected_object != row.object %}<span class="row-meta">Affects <code>{{ row.affected_object }}</code></span>{% endif %}
+          </td>
+          <td>{{ ui.source(row.source, row.source_label) }}</td>
+          <td>{{ ui.evidence(row.evidence_status, row.evidence_label) }}</td>
+          <td><a class="btn-sm" href="{{ ui.finding_href(view, row.id) }}" data-open-finding="{{ row.id }}" aria-haspopup="dialog">Details<span class="sr-only"> for {{ row.id }}</span></a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if not print_mode %}
+  <p class="empty" data-no-results hidden>No findings match these filters. <button type="button" class="linkish" data-filter-reset>Reset filters</button></p>
+  <div class="pager" data-pager hidden>
+    <button type="button" class="btn-ghost" data-page-more>Show more</button>
+  </div>
+  {% endif %}
+  {% else %}
+  <p class="empty">No findings were produced for this change set.</p>
+  {% endif %}
+</section>

@@ -1,0 +1,102 @@
+{% import "_report_macros.html" as ui %}
+{% set audit = view.audit %}
+<section class="rv-panel" id="audit" {{ ui.panel_attrs(state, 'audit', print_mode) }}>
+  <div class="panel-head">
+    <h2>Audit trail</h2>
+    <p class="hint">How this report was produced, from the records saved with the run. Steps the run did not record are shown as not recorded.</p>
+  </div>
+
+  <div class="two-up">
+    <div class="card">
+      <h3>Report metadata</h3>
+      <dl class="kv">
+        {% for item in audit.metadata %}<div><dt>{{ item.label }}</dt><dd>{{ item.value }}</dd></div>{% endfor %}
+      </dl>
+    </div>
+    <div class="card">
+      <h3>Reviewer actions</h3>
+      <p class="empty">None recorded. This application does not record reviewer actions or approvals.</p>
+      <h3>Analysis phases</h3>
+      {% if audit.status_available %}
+      <ol class="phase-list">
+        {% for phase in audit.phases %}
+        <li class="{{ 'is-done' if phase.recorded else 'is-missing' }}">
+          <span class="phase-mark" aria-hidden="true"></span>
+          <div>
+            <p class="phase-name">{{ phase.label }} <span class="hint">{{ 'Recorded' if phase.recorded else 'Not recorded' }}</span></p>
+            {% if phase.summary %}<p class="hint">{{ phase.summary }}</p>{% endif %}
+            {% if phase.lines %}
+            <details class="disclosure"{% if print_mode %} open{% endif %}>
+              <summary>{{ phase.lines | length }} detail line{{ 's' if phase.lines | length != 1 }}</summary>
+              <ul>{% for line in phase.lines %}<li>{{ line }}</li>{% endfor %}</ul>
+            </details>
+            {% endif %}
+          </div>
+        </li>
+        {% endfor %}
+      </ol>
+      <p class="hint">Per-phase timestamps are not recorded by the run store.</p>
+      {% else %}
+      <p class="empty">The run status file is not available, so phase records cannot be shown.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card dev-only">
+    <h3>Object versions</h3>
+    <p class="hint">SHA-256 of the captured source in each environment.</p>
+    <div class="table-scroll">
+      <table class="data-table compact">
+        <thead><tr><th scope="col">Object</th><th scope="col">Proposed · {{ view.header.proposed.label }}</th><th scope="col">Baseline · {{ view.header.baseline.label }}</th><th scope="col">State</th></tr></thead>
+        <tbody>
+          {% for item in audit.hashes %}
+          <tr>
+            <td><code class="obj">{{ item.label }}</code></td>
+            <td><code class="hash">{{ item.test_hash or 'Not captured' }}</code></td>
+            <td><code class="hash">{{ item.prod_hash or 'Not captured' }}</code></td>
+            <td>{{ item.state_label }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="4">No objects were compared.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h3>AI investigator tool calls</h3>{{ ui.kind('ai') }}</div>
+    {% if not view.ai.used %}
+    <p class="empty">The AI investigator did not run, so it made no tool calls.</p>
+    {% elif audit.tools %}
+    <p class="hint">Each read the investigator made through the allow-listed tools, in order. Tool-call timestamps are not recorded. The model's private reasoning is not shown.</p>
+    <div class="table-scroll">
+      <table class="data-table compact">
+        <thead><tr><th scope="col">#</th><th scope="col">Tool</th><th scope="col">Environment</th><th scope="col">Object</th><th scope="col">Result</th></tr></thead>
+        <tbody>
+          {% for call in audit.tools %}
+          <tr>
+            <td>{{ call.index }}</td>
+            <td>{{ call.tool }}</td>
+            <td>{{ call.environment }}</td>
+            <td><code class="obj">{{ call.target }}</code></td>
+            <td>{% if call.ok %}Allowed{% if call.bytes is not none %} <span class="hint">{{ call.bytes }} bytes</span>{% endif %}{% else %}<span class="env-tag is-refused">Not allowed</span>{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty">The AI investigator made no tool calls.</p>
+    {% endif %}
+  </div>
+
+  {% if audit.events %}
+  <details class="card disclosure"{% if print_mode %} open{% endif %}>
+    <summary>Run events <span class="hint">{{ audit.events | length }} recorded</span></summary>
+    <ol class="event-list">
+      {% for event in audit.events %}<li><span class="env-tag">{{ event.stage }}</span> {{ event.message }}</li>{% endfor %}
+    </ol>
+  </details>
+  {% endif %}
+</section>

@@ -1,0 +1,60 @@
+{% import "_report_macros.html" as ui %}
+<section class="rv-panel" id="dependencies" {{ ui.panel_attrs(state, 'dependencies', print_mode) }}>
+  <div class="panel-head">
+    <h2>Dependencies</h2>
+    <p class="hint">Callers and referenced objects read from the Oracle dependency dictionary of the named database, to a limited depth. Linked findings are those whose changed object, affected object, or call path names the edge's object. Business processes are not mapped, so business impact is shown as not mapped instead of guessed.</p>
+  </div>
+  {% if report.diagram_svg %}
+  <details class="diagram-wrap"{% if print_mode or view.dependencies | length <= 12 %} open{% endif %}>
+    <summary>Dependency diagram</summary>
+    <div class="diagram">{{ report.diagram_svg | safe }}</div>
+    <p class="hint">The diagram shows at most six callers and six referenced objects. The table lists every edge.</p>
+  </details>
+  {% endif %}
+  {% if view.dependencies %}
+  {% if not print_mode %}
+  <div class="toolbar" data-dep-filters role="search" aria-label="Filter dependencies">
+    <label class="field field-grow"><span>Search</span><input type="search" data-dep-filter="q" placeholder="Object, type…" autocomplete="off"></label>
+    <label class="field"><span>Direction</span>
+      <select data-dep-filter="dir"><option value="">All</option><option value="caller">Calls the selected package</option><option value="uses">Used by the selected package</option></select>
+    </label>
+    <label class="field"><span>Impact</span>
+      <select data-dep-filter="impact"><option value="">All</option>{% for item in view.metrics.dependencies_by_impact %}<option value="{{ item.label }}">{{ item.label }} ({{ item.count }})</option>{% endfor %}</select>
+    </label>
+  </div>
+  <p class="result-count" data-dep-count aria-live="polite">Showing {{ view.dependencies | length }} of {{ view.dependencies | length }} edges</p>
+  {% endif %}
+  <div class="table-scroll">
+    <table class="data-table dep-table">
+      <caption class="sr-only">Dependency edges</caption>
+      <thead>
+        <tr>
+          <th scope="col">Object</th>
+          <th scope="col">Relationship</th>
+          <th scope="col">Impact</th>
+          <th scope="col">Linked findings</th>
+          <th scope="col" class="dev-only">Source</th>
+          <th scope="col">Business impact</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for dep in view.dependencies %}
+        <tr id="{{ dep.dom_id }}" data-dep data-dir="{{ dep.direction }}" data-impact="{{ dep.impact }}" data-search="{{ dep.search }}">
+          <td><code class="obj">{{ dep.qualified }}</code><span class="row-meta">{{ dep.object_type | lower }}</span></td>
+          <td>{{ dep.direction_label }}<span class="row-meta">{{ dep.usage }}</span></td>
+          <td><span class="impact impact-{{ dep.impact_tone }}">{{ dep.impact }}</span></td>
+          <td>
+            {% for item in dep.findings %}<a href="{{ ui.finding_href(view, item.id) }}" data-open-finding="{{ item.id }}" class="chip-link">{{ ui.sev(item.level, item.level_label) }} {{ item.id }}</a> {% else %}<span class="hint">None</span>{% endfor %}
+          </td>
+          <td class="dev-only">{{ dep.database | capitalize }} dictionary<span class="row-meta">depth {{ dep.depth }}</span></td>
+          <td><span class="hint">Not mapped</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if not print_mode %}<p class="empty" data-dep-empty hidden>No dependency matches these filters.</p>{% endif %}
+  {% else %}
+  <p class="empty">No dependency edges were returned.</p>
+  {% endif %}
+</section>

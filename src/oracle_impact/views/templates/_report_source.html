@@ -1,0 +1,100 @@
+{% import "_report_macros.html" as ui %}
+<section class="rv-panel" id="comparison" {{ ui.panel_attrs(state, 'source', print_mode) }}>
+  <div class="panel-head">
+    <h2>Source comparison</h2>
+    <p class="hint">{{ view.header.proposed.label }} (proposed version) is on the left. {{ view.header.baseline.label }} (production baseline) is on the right. Line numbers refer to the captured snapshot. Source text is shown exactly as captured.</p>
+  </div>
+  {% if view.diffs %}
+  <div class="source-layout">
+    {% if not print_mode %}
+    <nav class="object-list" aria-label="Compared objects" data-object-list>
+      <div class="object-filters">
+        <label class="field"><span>Find object</span><input type="search" data-object-search placeholder="Name…" autocomplete="off"></label>
+        <label class="check"><input type="checkbox" data-object-changed checked> Changed only</label>
+      </div>
+      <ul>
+        {% for diff in view.diffs %}
+        <li data-object-item data-key="{{ diff.key }}" data-state="{{ diff.state }}" data-search="{{ (diff.label ~ ' ' ~ diff.object_type) | lower }}"{% if diff.state == 'unchanged' %} hidden{% endif %}>
+          <a href="{{ view.base_url }}?tab=source&amp;object={{ diff.key | urlencode }}" data-open-object="{{ diff.key }}"{% if state.object == diff.key %} aria-current="true"{% endif %}>
+            <span class="obj-name">{{ diff.label }}</span>
+            <span class="obj-meta">{{ diff.object_type | lower }} · {{ diff.state_label }}{% if diff.state not in ['unchanged'] %} · <span class="plus">+{{ diff.added }}</span> <span class="minus">−{{ diff.removed }}</span>{% endif %}</span>
+            {% if diff.level %}<span class="obj-meta">{{ ui.sev(diff.level, diff.level | capitalize) }} {{ diff.findings | length }} finding{{ 's' if diff.findings | length != 1 }}</span>{% endif %}
+          </a>
+        </li>
+        {% endfor %}
+      </ul>
+      <p class="hint" data-object-empty hidden>No object matches.</p>
+    </nav>
+    {% endif %}
+    <div class="diff-area">
+      {% for diff in view.diffs %}
+      <article class="diff-view" id="{{ diff.dom_id }}" data-diff-view data-key="{{ diff.key }}" aria-labelledby="{{ diff.dom_id }}-title"{% if not print_mode and state.object != diff.key %} hidden{% endif %}>
+        <header class="diff-head">
+          <div>
+            <h3 id="{{ diff.dom_id }}-title"><code>{{ diff.label }}</code> <span class="hint">{{ diff.object_type | lower }}</span></h3>
+            <p class="row-meta">{{ diff.state_label }} · <span class="plus">+{{ diff.added }}</span> <span class="minus">−{{ diff.removed }}</span> · {{ diff.hunks }} change block{{ 's' if diff.hunks != 1 }} · {{ diff.row_count }} aligned lines</p>
+          </div>
+          {% if not print_mode %}
+          <div class="diff-tools">
+            <div class="seg-toggle" role="group" aria-label="Lines to show">
+              <button type="button" data-diff-mode="changes" aria-pressed="true">Changes only</button>
+              <button type="button" data-diff-mode="full" aria-pressed="false">Full source</button>
+            </div>
+            <button type="button" class="btn-ghost" data-prev-change{% if not diff.hunks %} disabled{% endif %}>Previous change</button>
+            <button type="button" class="btn-ghost" data-next-change{% if not diff.hunks %} disabled{% endif %}>Next change</button>
+          </div>
+          {% endif %}
+        </header>
+        <dl class="kv hashes dev-only">
+          <div><dt>Proposed · {{ view.header.proposed.label }} SHA-256</dt><dd><code class="hash">{{ diff.test_hash or 'Not captured' }}</code></dd></div>
+          <div><dt>Baseline · {{ view.header.baseline.label }} SHA-256</dt><dd><code class="hash">{{ diff.prod_hash or 'Not captured' }}</code></dd></div>
+        </dl>
+        {% if diff.findings %}
+        <p class="linked-findings">Findings on this object:
+          {% for row in diff.findings %}
+          <a href="{{ ui.finding_href(view, row.id) }}" data-open-finding="{{ row.id }}" class="chip-link">{{ ui.sev(row.level, row.level_label) }} {{ row.id }}</a>{% if row.diff_link and row.diff_link.line %} <a href="{{ ui.diff_href(view, row.diff_link) }}" data-goto-line="{{ row.diff_link.key }}|{{ row.diff_link.side }}|{{ row.diff_link.line }}" class="line-link">line {{ row.diff_link.line }}</a>{% endif %}
+          {% endfor %}
+        </p>
+        {% endif %}
+        {% if diff.state == 'unchanged' %}
+        <p class="notice notice-info">No differences between the two environments. Choose Full source to read it.</p>
+        {% elif diff.state == 'formatting' %}
+        <p class="notice notice-info">Only whitespace or formatting differs. Normalized source is identical.</p>
+        {% elif diff.state == 'missing' %}
+        <p class="notice notice-warning">No source was captured for this object in either environment.</p>
+        {% endif %}
+        {% if diff.rows %}
+        <div class="diff-scroll" tabindex="0" role="region" aria-label="Side-by-side diff for {{ diff.label }} {{ diff.object_type | lower }}">
+          <table class="diff-table{{ ' changes-only' if not print_mode }}" data-diff-table>
+            <colgroup><col class="col-ln"><col><col class="col-ln"><col></colgroup>
+            <thead>
+              <tr>
+                <th scope="colgroup" colspan="2">{{ view.header.proposed.label }} <small>proposed · {{ view.header.proposed.database_id }}</small></th>
+                <th scope="colgroup" colspan="2">{{ view.header.baseline.label }} <small>baseline · {{ view.header.baseline.database_id }}</small></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for item in diff.rows %}
+              {% if item.gap %}
+              <tr class="diff-gap"><td colspan="4">{{ item.gap }} unchanged line{{ 's' if item.gap != 1 }} hidden</td></tr>
+              {% else %}
+              <tr{% if item.id %} id="{{ item.id }}"{% endif %}{% if item.prod_no %} data-p="{{ item.prod_no }}"{% endif %}{% if item.test_no %} data-t="{{ item.test_no }}"{% endif %} class="{{ 'is-change' if item.change }}{{ ' hunk' if item.hunk_start }}{{ ' far' if item.far }}">
+                <td class="ln">{{ item.test_no or '' }}</td>
+                <td class="code k-{{ item.test_kind }}"><code>{{ item.test_text }}</code></td>
+                <td class="ln">{{ item.prod_no or '' }}</td>
+                <td class="code k-{{ item.prod_kind }}"><code>{{ item.prod_text }}</code></td>
+              </tr>
+              {% endif %}
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% endif %}
+      </article>
+      {% endfor %}
+    </div>
+  </div>
+  {% else %}
+  <p class="empty">No source objects were compared.</p>
+  {% endif %}
+</section>
