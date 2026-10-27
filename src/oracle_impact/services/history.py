@@ -140,7 +140,8 @@ def _hashes(report: Report) -> dict[tuple, str | None]:
     result = {}
     for state in report.object_states:
         for item in state.environments:
-            result[(item.environment, state.owner, state.name, state.object_type)] = item.sha256
+            if item.environment in ("test", "production"):
+                result[(item.environment, state.owner, state.name, state.object_type)] = item.sha256
     if not result:
         for diff in report.diffs:
             result[("test", diff.owner, diff.name, diff.object_type)] = diff.test_hash

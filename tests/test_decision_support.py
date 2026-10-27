@@ -7,7 +7,7 @@ import secrets
 from fastapi.testclient import TestClient
 from pypdf import PdfReader
 
-from oracle_impact.fixtures.demo_catalog import build_autumn_catalog, build_demo_catalogs
+from oracle_impact.fixtures.demo_catalog import build_demo_catalogs
 from oracle_impact.infrastructure.oracle.gateway import FixtureGateway
 from oracle_impact.main import create_app
 from oracle_impact.security import _sign, csrf_token, session_role
@@ -87,28 +87,22 @@ def test_approval_is_disabled_without_a_separate_approver_token(tmp_path):
     assert not same.app.state.settings.approvals_enabled
 
 
-def test_validation_records_resolve_policy_items(tmp_path):
+def test_report_does_not_record_validation_or_review(tmp_path):
     client = _client(tmp_path)
     _sign_in(client, "test-token")
     run_id = _start(client, "DEMO.PKG_BILLING")
     review = _review(client, run_id)
-    item = review["readiness"]["validations"][0]
-    finding_id = item["item"]["finding_id"]
-    assert item["state"] == "unresolved"
-    base = {"finding_id": finding_id, "environment": "test", "test_case": "Boundary amounts", "status": "passed"}
-    assert _post(client, f"/analyses/{run_id}/validations", **base) == "evidence_required"
-    assert _post(client, f"/analyses/{run_id}/validations", **{**base, "finding_id": "F-NOPE", "evidence": "x"}) == "unknown_finding"
-    assert _post(client, f"/analyses/{run_id}/validations", **{**base, "environment": "qa", "evidence": "x"}) == "invalid_environment"
-    assert _post(client, f"/analyses/{run_id}/validations", **{**base, "evidence": "TEST log 42", "return_tab": "findings"}) == "validation_saved"
+    assert review["readiness"]["validations"][0]["state"] == "unresolved"
+    page = client.get(f"/analyses/{run_id}/report?tab=findings").text
+    assert "Validation and review status" not in page
+    assert "Record a validation result" not in page
+    assert "Record a reviewer decision" not in page
+    for path in (f"/analyses/{run_id}/validations", f"/analyses/{run_id}/reviews"):
+        response = client.post(path, data={"csrf_token_value": _csrf(client), "finding_id": "F-1"}, follow_redirects=False)
+        assert response.status_code == 404
     after = _review(client, run_id)
-    resolved = next(entry for entry in after["readiness"]["validations"] if entry["item"]["finding_id"] == finding_id)
-    assert resolved["state"] == "resolved"
-    assert after["readiness"]["decision"] == "on_hold" and after["readiness"]["open_blockers"] == 4
-    assert after["review"]["validations"][0]["created_by"]["role"] == "analyst"
-
-    blocker = after["readiness"]["blockers"][0]["item"]["finding_id"]
-    assert _post(client, f"/analyses/{run_id}/reviews", finding_id=blocker, decision="not_an_issue") == "reason_required"
-    assert _post(client, f"/analyses/{run_id}/reviews", finding_id=blocker, decision="accepted", reason="") == "review_saved"
+    assert after["review"]["validations"] == [] and after["review"]["reviews"] == []
+    assert all(entry["state"] == "unresolved" for entry in after["readiness"]["validations"])
 
 
 def test_manifest_and_baseline_need_an_approver_and_drive_classification(tmp_path):
@@ -202,7 +196,7 @@ def test_legacy_session_cookie_is_still_accepted_as_analyst(tmp_path):
     assert _post(client, f"/analyses/{run_id}/approval", decision="approved", notes="x") == "approver_required"
 
 
-def test_report_tabs_filters_and_autumn_comparison_render(tmp_path):
+def test_report_tabs_and_filters_render(tmp_path):
     client = _client(tmp_path)
     _sign_in(client, "test-token")
     run_id = _start(client, "DEMO.PKG_BILLING")
@@ -213,14 +207,11 @@ def test_report_tabs_filters_and_autumn_comparison_render(tmp_path):
     assert "Production-only drift was not checked." in page
     for state in ("Analysis completed", "Coverage complete", "Deployment recommended", "Human approval"):
         assert state in page
-    for key in ("ec", "val", "blk", "env", "chg"):
+    for key in ("ec", "blk", "env", "chg"):
         assert f'data-filter="{key}"' in page
+    assert 'data-filter="val"' not in page
+    assert "Validation and review status" not in page
     assert "CMP-DEPENDENT" in page or "PKG_LEGACY" in page
-
-    autumn = client.get(f"/analyses/{run_id}/report", params={"tab": "source", "cmp": "test:autumn"}).text
-    assert 'data-cmp="test:autumn"' in autumn and "AUTUMN" in autumn
-    ignored = client.get(f"/analyses/{run_id}/report", params={"tab": "source", "cmp": "../etc"}).text
-    assert 'data-cmp=""' in ignored
 
     detail = client.get(f"/analyses/{run_id}/report?tab=findings").text
     for question in ("What changed?", "Where is the evidence?", "Why this severity?", "Does it block deployment?", "What needs to be tested?"):
@@ -236,28 +227,20 @@ def test_report_tabs_filters_and_autumn_comparison_render(tmp_path):
     assert "Deployment on hold" in text and "BLK-COMPILE-FAILURE" in text and "Compilation readiness" in text
 
 
-def test_autumn_fixture_is_compared_with_both_environments(tmp_path):
+def test_reports_compare_test_and_production_only(tmp_path):
     client = _client(tmp_path)
     _sign_in(client, "test-token")
     run_id = _start(client, "DEMO.PKG_STATUS")
     exported = client.get(f"/analyses/{run_id}/export?format=json").json()
-    assert {item["key"] for item in exported["comparisons"]} >= {"test:autumn", "autumn:production"}
-    objects = _review(client, run_id)["classification"]["objects"]
-    assert {item["autumn"] for item in objects} == {"matches_test"}
-    assert build_autumn_catalog().sources
-
-
-def test_report_without_autumn_omits_it_and_still_decides(tmp_path):
-    client = _client(tmp_path, fixture_autumn=False)
-    _sign_in(client, "test-token")
-    run_id = _start(client, "DEMO.PKG_STATUS")
-    exported = client.get(f"/analyses/{run_id}/export?format=json").json()
-    assert exported["comparisons"] == []
+    assert "comparisons" not in exported
+    assert [item["role"] for item in exported["environments"]] == ["source", "baseline"]
+    assert {env["environment"] for state in exported["object_states"] for env in state["environments"]} == {"test", "production"}
     assert _review(client, run_id)["readiness"]["decision"] == "recommended"
     for tab in ("overview", "objects", "source", "dependencies", "validation", "audit"):
         page = client.get(f"/analyses/{run_id}/report?tab={tab}")
         assert page.status_code == 200
-    assert 'data-cmp="test:autumn"' not in client.get(f"/analyses/{run_id}/report", params={"tab": "source", "cmp": "test:autumn"}).text
+        assert "AUTUMN" not in page.text and "data-cmp" not in page.text
+    assert "AUTUMN" not in client.get("/").text
 
 
 def test_blank_optional_paths_fall_back_to_the_runs_directory(tmp_path):

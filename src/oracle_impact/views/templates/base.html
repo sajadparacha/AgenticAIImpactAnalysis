@@ -13,9 +13,20 @@
         <p class="eyebrow">Impact analysis</p>
         <a class="wordmark" href="/">Oracle package impact analysis</a>
       </div>
-      <nav class="mast-nav">
-        <a href="/">Dashboard</a>
-        <a href="/mappings">Business mappings</a>
+      <nav class="mast-nav" aria-label="Sections">
+        {% set path = request.url.path if request is defined else '' %}
+        {% set nav = namespace(current='') %}
+        {% if path == '/' %}{% set nav.current = 'hybrid' %}
+        {% elif path.startswith('/agentic') %}{% set nav.current = 'agentic' %}
+        {% elif path.startswith('/mappings') %}{% set nav.current = 'mappings' %}
+        {% elif path.startswith('/analyses/') %}
+          {% if (mode is defined and mode == 'agentic') or (report is defined and report and report.run_mode == 'agentic') %}{% set nav.current = 'agentic' %}
+          {% elif (mode is defined and mode) or (report is defined and report) %}{% set nav.current = 'hybrid' %}
+          {% endif %}
+        {% endif %}
+        <a href="/"{% if nav.current == 'hybrid' %} aria-current="page"{% endif %}>Hybrid analysis</a>
+        <a href="/agentic"{% if nav.current == 'agentic' %} aria-current="page"{% endif %}>Agent-guided analysis</a>
+        <a href="/mappings"{% if nav.current == 'mappings' %} aria-current="page"{% endif %}>Business mappings</a>
         <form method="post" action="/logout">
           <button type="submit" class="linkish">Sign out</button>
         </form>

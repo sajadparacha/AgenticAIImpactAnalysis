@@ -2,9 +2,11 @@
 
 Blocking rules run on deterministic findings when an analysis finishes and
 their output is saved with the report. Readiness is then evaluated whenever
-the report is shown, from that saved output plus recorded validation results,
-reviewer decisions, coverage, drift classification, and freshness.
+the report is shown, from that saved output plus coverage, drift
+classification, and freshness.
 
+The report lists required tests. It does not store validation results or
+reviewer decisions, so those items stay open for the life of the report.
 Readiness is a recommendation. Human approval is recorded separately and is
 never inferred from it.
 """
@@ -27,8 +29,8 @@ VALIDATION_AND_REVIEW = "validation_and_review"
 VALIDATION = "validation"
 RESOLUTIONS = {
     FIX_AND_REANALYZE: "Fix the code or environment and run a new analysis. Review notes cannot clear it.",
-    VALIDATION_AND_REVIEW: "Record a passed validation and a reviewer decision of Accepted, or a reviewer decision of Not an issue with a reason.",
-    VALIDATION: "Record a passed validation, or a reviewer decision of Not an issue with a reason.",
+    VALIDATION_AND_REVIEW: "Test this and have it reviewed before deployment. The result is not recorded in this report.",
+    VALIDATION: "Test this before deployment, or justify why it does not apply. The result is not recorded in this report.",
 }
 RECOMMENDED, ON_HOLD, INDETERMINATE = "recommended", "on_hold", "indeterminate"
 READINESS_LABELS = {
@@ -113,7 +115,7 @@ DEFAULT_RULES: tuple[Rule, ...] = (
         "Part of the scope could not be analyzed",
         "validation",
         VALIDATION,
-        "Restore dictionary access or inspect the object manually and record the result.",
+        "Restore dictionary access or inspect the object manually before deployment.",
         lambda f: f.change_category == "coverage" and not f.attributes.get("snapshot_drift"),
     ),
     Rule(
@@ -177,7 +179,7 @@ DEFAULT_RULES: tuple[Rule, ...] = (
         "Medium or higher finding without a specific rule",
         "validation",
         VALIDATION,
-        "Review the finding and record how it was validated.",
+        "Review the finding with the people who own the change before deployment.",
         lambda f: f.severity in {Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM} or bool(f.attributes.get("blocks_eligibility")),
     ),
 )
@@ -240,47 +242,19 @@ def policy_for(report: Report) -> tuple[PolicyEvaluation, bool]:
 
 
 def item_status(item: PolicyItem, validations: list[dict], reviews: list[dict]) -> dict:
-    """Whether one blocker or validation item is resolved, and why. Only recorded facts count."""
-    related = [record for record in validations if record.get("finding_id") == item.finding_id]
-    latest = _latest_by_case(related)
-    passed = [record for record in latest if record.get("status") == "passed"]
-    failed = [record for record in latest if record.get("status") == "failed"]
-    review = next((record for record in reversed(reviews) if record.get("finding_id") == item.finding_id), None)
-    decision = (review or {}).get("decision", "")
+    """Whether one policy item is still open.
+
+    Stored validation results and reviewer decisions are ignored. This report
+    does not record them, so a required test stays open until a new analysis.
+    """
+    del validations, reviews
     if item.resolution == FIX_AND_REANALYZE:
         state, reason = "unresolved", "Needs a fix and a new analysis."
-    elif failed:
-        state, reason = "unresolved", f"{len(failed)} validation(s) failed."
-    elif decision == "not_an_issue":
-        state, reason = "resolved", "A reviewer recorded that this is not an issue."
-    elif decision == "confirmed_issue":
-        state, reason = "unresolved", "A reviewer confirmed the issue."
     elif item.resolution == VALIDATION_AND_REVIEW:
-        if passed and decision == "accepted":
-            state, reason = "resolved", "Validation passed and a reviewer accepted it."
-        elif passed:
-            state, reason = "awaiting_review", "Validation passed. A reviewer decision is still needed."
-        else:
-            state, reason = "unresolved", "No passed validation is recorded."
-    elif passed:
-        state, reason = "resolved", "Validation passed."
+        state, reason = "unresolved", "Needs a test and a review outside this report."
     else:
-        state, reason = "unresolved", "No passed validation is recorded."
-    return {
-        "state": state,
-        "reason": reason,
-        "passed": len(passed),
-        "failed": len(failed),
-        "recorded": len(latest),
-        "decision": decision,
-    }
-
-
-def _latest_by_case(records: list[dict]) -> list[dict]:
-    latest: dict[str, dict] = {}
-    for record in records:
-        latest[record.get("id") or str(len(latest))] = record
-    return list(latest.values())
+        state, reason = "unresolved", "Needs a test outside this report."
+    return {"state": state, "reason": reason, "passed": 0, "failed": 0, "recorded": 0, "decision": ""}
 
 
 def evaluate_readiness(

@@ -1,14 +1,31 @@
 {% extends "base.html" %}
-{% block title %}Analysis {{ run_id }}{% endblock %}
+{% block title %}Run {{ run_id[:8] }} progress{% endblock %}
 {% block content %}
+<nav class="crumbs" aria-label="Breadcrumb">
+  <ol>
+    {% if mode == "agentic" %}<li><a href="/agentic">Agent-guided analysis</a></li>{% else %}<li><a href="/">Hybrid analysis</a></li>{% endif %}
+    <li><span title="{{ run_id }}">Run {{ run_id[:8] }}</span></li>
+    <li aria-current="page">Progress</li>
+  </ol>
+</nav>
 <section class="page-intro">
   <div>
-    <p class="eyebrow">Run {{ run_id }}</p>
-    <h1>Analysis status</h1>
+    <h1>Analysis progress</h1>
   </div>
   <p class="badge badge-{{ status.status }}">{{ status.status }}</p>
 </section>
 
+{% if mode == "agentic" %}
+{% set stage_labels = {
+  "queued": "Queued",
+  "investigating": "Agentic review",
+  "snapshotting": "Source snapshot",
+  "comparing": "Code comparison",
+  "dependencies": "Dependencies",
+  "validating": "Recommendation",
+  "completed": "Complete"
+} %}
+{% else %}
 {% set stage_labels = {
   "queued": "Queued",
   "snapshotting": "Source snapshot",
@@ -18,7 +35,8 @@
   "validating": "Recommendation",
   "completed": "Complete"
 } %}
-<ol class="stages" data-poll-status="/analyses/{{ run_id }}/status" data-current="{{ status.status }}" data-terminal="{{ 'yes' if status.status in ['completed', 'failed'] else 'no' }}">
+{% endif %}
+<ol class="stages" data-poll-status="/analyses/{{ run_id }}/status" data-report-url="/analyses/{{ run_id }}/report" data-current="{{ status.status }}" data-terminal="{{ 'yes' if status.status in ['completed', 'failed'] else 'no' }}">
   {% for stage, label in stage_labels.items() %}
   <li data-stage="{{ stage }}">{{ label }}</li>
   {% endfor %}
@@ -55,28 +73,5 @@
   {% endfor %}
 </div>
 {% if status.error %}<p class="banner banner-error" data-status-error>{{ status.error }}</p>{% endif %}
-
-{% if report %}
-<section class="stat-row">
-  <article class="stat">
-    <p class="stat-label">Lines changed</p>
-    <p class="stat-value">{{ report.statistics.lines_changed }}</p>
-    <p class="stat-note">{{ report.statistics.lines_added }} added, {{ report.statistics.lines_removed }} removed</p>
-  </article>
-  <article class="stat">
-    <p class="stat-label">Dependencies</p>
-    <p class="stat-value">{{ report.statistics.dependency_count }}</p>
-  </article>
-  <article class="stat">
-    <p class="stat-label">Findings</p>
-    <p class="stat-value">{{ report.findings | length }}</p>
-    <p class="stat-note">{{ report.statistics.high_findings }} high or critical, {{ report.statistics.medium_findings }} medium</p>
-  </article>
-  <article class="stat stat-{{ report.recommendation.value }}">
-    <p class="stat-label">Recommendation</p>
-    <p class="stat-value">{{ report.recommendation_label }}</p>
-  </article>
-</section>
-<p><a class="button" href="/analyses/{{ run_id }}/report">Open the full report</a></p>
-{% endif %}
+{% if status.status not in ["completed", "failed"] %}<p class="hint" data-report-hint>The report opens here when the analysis finishes.</p>{% endif %}
 {% endblock %}

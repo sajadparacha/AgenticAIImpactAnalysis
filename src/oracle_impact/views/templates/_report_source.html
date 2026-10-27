@@ -1,22 +1,13 @@
 {% import "_report_macros.html" as ui %}
-{% set cmpset = active_comparison(view, state) if not print_mode else view.comparison_sets[0] %}
-{% set diffs = cmpset.diffs %}
-{% set left_label = view.header.proposed.label if cmpset.primary else cmpset.source_label %}
-{% set right_label = view.header.baseline.label if cmpset.primary else cmpset.target_label %}
+{% set diffs = view.diffs %}
+{% set left_label = view.header.proposed.label %}
+{% set right_label = view.header.baseline.label %}
 {% set objects_by_key = {} %}
 {% for item in view.objects %}{% set _ = objects_by_key.update({item.key: item}) %}{% endfor %}
 <section class="rv-panel" id="comparison" {{ ui.panel_attrs(state, 'source', print_mode) }}>
   <div class="panel-head">
     <h2>Source comparison</h2>
-    <p class="hint">{{ left_label }} is on the left{% if cmpset.primary %} (proposed version){% endif %}. {{ right_label }} is on the right{% if cmpset.primary %} (production baseline){% endif %}. Line numbers refer to the captured snapshot. Source text is shown exactly as captured.</p>
-    {% if view.comparison_sets | length > 1 and not print_mode %}
-    <nav class="seg-toggle cmp-select" aria-label="Environments to compare">
-      {% for item in view.comparison_sets %}
-      <a href="{{ view.base_url }}?tab=source{% if not item.primary %}&amp;cmp={{ item.key | urlencode }}{% endif %}" aria-current="{{ 'true' if item.key == cmpset.key else 'false' }}" class="{{ 'is-active' if item.key == cmpset.key }}">{{ item.label }}</a>
-      {% endfor %}
-    </nav>
-    {% if not cmpset.primary %}<p class="hint">Findings and line links refer to the {{ view.header.proposed.label }} → {{ view.header.baseline.label }} comparison, so they are not shown here.</p>{% endif %}
-    {% endif %}
+    <p class="hint">{{ left_label }} is on the left (proposed version). {{ right_label }} is on the right (production baseline). Line numbers refer to the captured snapshot. Source text is shown exactly as captured.</p>
   </div>
   {% if diffs %}
   <div class="source-layout">
@@ -29,7 +20,7 @@
       <ul>
         {% for diff in diffs %}
         <li data-object-item data-key="{{ diff.key }}" data-state="{{ diff.state }}" data-search="{{ (diff.label ~ ' ' ~ diff.object_type) | lower }}"{% if diff.state == 'unchanged' %} hidden{% endif %}>
-          <a href="{{ view.base_url }}?tab=source&amp;object={{ diff.key | urlencode }}{% if not cmpset.primary %}&amp;cmp={{ cmpset.key | urlencode }}{% endif %}" data-open-object="{{ diff.key }}"{% if state.object == diff.key %} aria-current="true"{% endif %}>
+          <a href="{{ view.base_url }}?tab=source&amp;object={{ diff.key | urlencode }}" data-open-object="{{ diff.key }}"{% if state.object == diff.key %} aria-current="true"{% endif %}>
             <span class="obj-name">{{ diff.label }}</span>
             <span class="obj-meta">{{ diff.object_type | lower }} · {{ diff.state_label }}{% if diff.state not in ['unchanged'] %} · <span class="plus">+{{ diff.added }}</span> <span class="minus">−{{ diff.removed }}</span>{% endif %}</span>
             {% if diff.level %}<span class="obj-meta">{{ ui.sev(diff.level, diff.level | capitalize) }} {{ diff.findings | length }} finding{{ 's' if diff.findings | length != 1 }}</span>{% endif %}
@@ -60,7 +51,7 @@
           </div>
           {% endif %}
         </header>
-        <dl class="kv hashes dev-only">
+        <dl class="kv hashes">
           <div><dt>{{ left_label }} SHA-256</dt><dd><code class="hash">{{ diff.test_hash or 'Not captured' }}</code></dd></div>
           <div><dt>{{ right_label }} SHA-256</dt><dd><code class="hash">{{ diff.prod_hash or 'Not captured' }}</code></dd></div>
         </dl>
@@ -72,9 +63,7 @@
             <div><dt>{{ env.label }}</dt><dd>{% if env.inaccessible %}Not readable{% elif not env.found %}Not present{% else %}{{ env.compile_status or 'Validity not recorded' }}{% endif %}<span class="row-meta">captured {{ (env.captured_at or '')[:19] | replace('T', ' ') or 'time not recorded' }}</span></dd></div>
             {% endfor %}
             <div class="kv-wide"><dt>Classification</dt><dd>{{ meta.label }}{% for reason in meta.reasons %}<span class="row-meta">{{ reason }}</span>{% endfor %}</dd></div>
-            {% if cmpset.primary %}
             <div class="kv-wide"><dt>AI interpretation</dt><dd>{% set notes = diff.findings | selectattr('note_id') | list %}{% if notes %}{{ notes | length }} finding{{ 's' if notes | length != 1 }} on this object carry an AI note. Open a finding to read it next to the evidence.{% elif view.ai.used %}No AI note on this object.{% else %}The AI investigator did not run.{% endif %}</dd></div>
-            {% endif %}
           </dl>
         </details>
         {% endif %}
@@ -98,8 +87,8 @@
             <colgroup><col class="col-ln"><col><col class="col-ln"><col></colgroup>
             <thead>
               <tr>
-                <th scope="colgroup" colspan="2">{{ left_label }}{% if cmpset.primary %} <small>proposed · {{ view.header.proposed.database_id }}</small>{% endif %}</th>
-                <th scope="colgroup" colspan="2">{{ right_label }}{% if cmpset.primary %} <small>baseline · {{ view.header.baseline.database_id }}</small>{% endif %}</th>
+                <th scope="colgroup" colspan="2">{{ left_label }} <small>proposed · {{ view.header.proposed.database_id }}</small></th>
+                <th scope="colgroup" colspan="2">{{ right_label }} <small>baseline · {{ view.header.baseline.database_id }}</small></th>
               </tr>
             </thead>
             <tbody>

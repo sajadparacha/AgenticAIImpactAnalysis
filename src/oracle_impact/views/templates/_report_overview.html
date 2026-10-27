@@ -54,12 +54,12 @@
           <li><a href="{{ view.base_url }}?tab=findings" data-goto-tab="findings">Explore findings</a></li>
           <li><a href="{{ view.base_url }}?tab=objects" data-goto-tab="objects">Changed objects and drift</a></li>
           <li><a href="{{ view.base_url }}?tab=source" data-goto-tab="source">Source comparison</a></li>
-          <li><a href="{{ view.base_url }}?tab=validation" data-goto-tab="validation">Record validation and approval</a></li>
+          <li><a href="{{ view.base_url }}?tab=validation" data-goto-tab="validation">Required tests and approval</a></li>
         </ul>
         {% endif %}
       </section>
 
-      <section class="card support-only" aria-labelledby="support-summary">
+      <section class="card" aria-labelledby="support-summary">
         <h3 id="support-summary">Plain-language risk summary</h3>
         {% set serious = m.severity | selectattr('level', 'in', ['critical', 'high']) | map(attribute='count') | sum %}
         <p>
@@ -86,7 +86,7 @@
           <div><dt>Affected applications and business processes</dt><dd>{% if view.business.established %}{{ view.business.rows | length }} mapped process{{ 'es' if view.business.rows | length != 1 }} listed under Business process impact.{% else %}Business impact not established. No maintained mapping covers the analyzed objects.{% endif %}</dd></div>
           <div><dt>Support teams</dt><dd>{% set teams = view.business.rows | map(attribute='mapping') | map(attribute='support_team') | select | unique | list %}{{ teams | join(', ') if teams else 'Not recorded in the business mappings.' }}</dd></div>
           <div><dt>Monitoring and rollback</dt><dd>Not recorded by the analyzer.</dd></div>
-          <div><dt>Readiness</dt><dd>{{ ready.label }}. Analyzer: {{ rec.label }}. Human decision: {{ view.human_decision.label | lower }}. Validation results recorded: {{ view.review.validations | length }}.</dd></div>
+          <div><dt>Readiness</dt><dd>{{ ready.label }}. Analyzer: {{ rec.label }}. Human decision: {{ view.human_decision.label | lower }}.</dd></div>
         </dl>
       </section>
 
@@ -134,7 +134,7 @@
               <tr>
                 <td>{{ ui.sev(row.level, row.level_label) }}</td>
                 <td><span class="row-title">{{ row.headline }}</span><span class="row-meta">{{ row.id }} · {{ row.category_label }}{% if row.note_id %} · AI note{% endif %}</span></td>
-                <td><code class="obj">{{ row.object }}</code><span class="row-meta dev-only">{{ row.object_type | lower }}{% if row.where %} · {{ row.where }}{% endif %}</span></td>
+                <td><code class="obj">{{ row.object }}</code><span class="row-meta">{{ row.object_type | lower }}{% if row.where %} · {{ row.where }}{% endif %}</span></td>
                 <td>{{ ui.evidence(row.evidence_status, row.evidence_label) }}</td>
                 <td><a class="btn-sm" href="{{ ui.finding_href(view, row.id) }}" data-open-finding="{{ row.id }}">Details<span class="sr-only"> for {{ row.id }}</span></a></td>
               </tr>
@@ -179,10 +179,10 @@
           {% endfor %}
         </ul>
         {% endif %}
-        <p class="hint">These are the analyzer's actions. Progress is tracked through validation results and reviewer decisions in Validation &amp; approval; nothing here is marked complete automatically.</p>
+        <p class="hint">These are the analyzer's actions. This report does not mark them complete.</p>
       </section>
 
-      <section class="card dev-only" aria-labelledby="changed-objects">
+      <section class="card" aria-labelledby="changed-objects">
         <div class="card-head">
           <h3 id="changed-objects">Changed objects <span class="count-chip">{{ view.counts.changed_objects }}</span></h3>
           <a href="{{ view.base_url }}?tab=source" data-goto-tab="source">Open source comparison →</a>
@@ -279,7 +279,6 @@
         <h3 id="unverified">What remains unverified</h3>
         {% set u = view.unverified %}
         <ul class="gap-list">
-          <li><strong>{{ view.review.validations | length if u.tests_recorded else 'None' }}</strong> validation result{{ 's' if view.review.validations | length != 1 }} recorded</li>
           <li><strong>{{ u.potential }}</strong> finding{{ 's' if u.potential != 1 }} potential, not confirmed</li>
           <li><strong>{{ u.unknown }}</strong> finding{{ 's' if u.unknown != 1 }} that could not be checked</li>
           {% if view.ai.used %}
@@ -296,8 +295,7 @@
         <dl class="facts">
           <div><dt>{{ ui.kind('det') }}</dt><dd>Computed in Python from the captured source and Oracle metadata. Drives severity and the recommendation.</dd></div>
           <div><dt>{{ ui.kind('ai') }}</dt><dd>{% if view.ai.used %}Written by {{ view.ai.model or 'the AI investigator' }}. An interpretation, not proof. It cannot change severity or the recommendation.{% else %}The AI investigator did not run for this report. Nothing here is model output.{% endif %}</dd></div>
-          <div><dt>{{ ui.kind('verified') }}</dt><dd>Results of tests that a person ran and recorded with evidence. {% if m.verified is none %}None are recorded for this report.{% else %}{{ m.verified }} finding{{ 's' if m.verified != 1 }} have a passed validation.{% endif %}</dd></div>
-          <div><dt>Human-reviewed</dt><dd>A reviewer recorded a decision. Reviews never upgrade AI text to fact.</dd></div>
+          <div><dt>Required test</dt><dd>The policy says to test or review this before deployment. The result is tracked outside this report, usually in the reply to the email.</dd></div>
         </dl>
       </section>
     </aside>

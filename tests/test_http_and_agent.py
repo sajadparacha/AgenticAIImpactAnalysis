@@ -125,6 +125,40 @@ def test_dashboard_hides_model_choice_when_egress_is_off(tmp_path):
     assert rejected.status_code == 400
 
 
+def test_finished_runs_open_the_report_and_unfinished_runs_show_progress(tmp_path):
+    client = client_for(tmp_path)
+    login(client)
+    started = client.post(
+        "/analyses",
+        data={"packages": "DEMO.PKG_STATUS", "csrf_token_value": _csrf(client)},
+        follow_redirects=True,
+    )
+    run_id = re.search(r"/analyses/([0-9a-f-]+)", str(started.url)).group(1)
+    assert str(started.url).endswith(f"/analyses/{run_id}/report")
+    finished = client.get(f"/analyses/{run_id}", follow_redirects=False)
+    assert finished.status_code == 303
+    assert finished.headers["location"] == f"/analyses/{run_id}/report"
+    assert f'href="/analyses/{run_id}/report?tab=audit#phases"' in started.text
+    assert f"Run {run_id[:8]}" in started.text
+    assert 'id="phases"' in started.text
+
+    store = client.app.state.store
+    store.create("pending-run", ["DEMO.PKG_STATUS"], mode="agentic")
+    store.write_status("pending-run", "comparing", detail="Comparing specifications and bodies.")
+    pending = client.get("/analyses/pending-run", follow_redirects=False)
+    assert pending.status_code == 200
+    assert 'aria-current="page">Progress' in pending.text
+    assert 'href="/agentic">Agent-guided analysis' in pending.text
+    assert 'data-report-url="/analyses/pending-run/report"' in pending.text
+    assert "The report opens here when the analysis finishes." in pending.text
+
+    store.write_status("pending-run", "failed", error="Production is unreachable.")
+    failed = client.get("/analyses/pending-run", follow_redirects=False)
+    assert failed.status_code == 200
+    assert "Production is unreachable." in failed.text
+    assert "The report opens here" not in failed.text
+
+
 def test_path_traversal_run_id(tmp_path):
     client = client_for(tmp_path)
     login(client)
@@ -577,6 +611,181 @@ def test_ai_finding_page_renders():
     assert "What changes" in page
     assert "now requires P_APPROVE" in page
     assert "Internal Server Error" not in page
+
+
+def test_agentic_page_is_off_and_rejects_runs_while_egress_is_off(tmp_path):
+    client = client_for(tmp_path)
+    login(client)
+    page = client.get("/agentic")
+    assert page.status_code == 200
+    assert "investigator is off" in page.text
+    assert 'action="/agentic/analyses"' not in page.text
+    home = client.get("/").text
+    mappings = client.get("/mappings").text
+    assert 'href="/agentic"' in home
+    assert 'href="/" aria-current="page"' in home
+    assert 'href="/agentic" aria-current="page"' not in home
+    assert 'href="/mappings" aria-current="page"' not in home
+    assert 'href="/agentic" aria-current="page"' in page.text
+    assert 'href="/" aria-current="page"' not in page.text
+    assert 'href="/mappings" aria-current="page"' in mappings
+
+    rejected = client.post("/agentic/analyses", data={"packages": "DEMO.PKG_STATUS", "csrf_token_value": _csrf(client)})
+    assert rejected.status_code == 400
+    assert "LLM egress is disabled" in rejected.text
+    assert client.app.state.store.list_runs() == []
+
+    expired = client.post("/agentic/analyses", data={"packages": "DEMO.PKG_STATUS", "csrf_token_value": "nope"}, follow_redirects=False)
+    assert expired.status_code == 303
+    assert expired.headers["location"].startswith("/agentic?error=")
+
+
+def test_agentic_page_runs_the_investigator_and_shows_its_trace(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from oracle_impact.main import create_app
+    from tests.support import ChecklistProvider, agentic_investigator, settings
+
+    provider = ChecklistProvider(final="I read both packages and their callers.")
+    configured = settings(tmp_path, llm_egress_enabled=True, llm_model="mock")
+    client = TestClient(create_app(configured, investigator=agentic_investigator(provider)))
+    login(client)
+
+    page = client.get("/agentic")
+    assert 'action="/agentic/analyses"' in page.text
+    started = client.post(
+        "/agentic/analyses",
+        data={"packages": "DEMO.PKG_STATUS", "csrf_token_value": _csrf(client)},
+        follow_redirects=True,
+    )
+    assert started.status_code == 200
+    run_id = re.search(r"/analyses/([0-9a-f-]+)", str(started.url)).group(1)
+    assert str(started.url).endswith(f"/analyses/{run_id}/report")
+    phases = started.text[started.text.index('id="phases"'):]
+    assert phases.index("Agentic review") < phases.index("Source snapshot")
+    assert {"get_package_source", "get_dependencies", "get_compile_errors"} <= set(provider.tools_seen)
+
+    status = client.get(f"/analyses/{run_id}/status").json()
+    assert status["status"] == "completed"
+    assert any(item["kind"] == "action" for item in status["activity"])
+    assert status["steps"]["investigating"]["started_at"] <= status["steps"]["snapshotting"]["started_at"]
+
+    exported = client.get(f"/analyses/{run_id}/export?format=json").json()
+    assert exported["run_mode"] == "agentic"
+    assert exported["recommendation_label"] == "Eligible for review after testing"
+    assert exported["agent_summary"] == "I read both packages and their callers."
+
+    report = client.get(f"/analyses/{run_id}/report").text
+    assert "Agentic read order, deterministic recommendation" in report
+    assert "I read both packages and their callers." in report
+    assert "Object status" in report
+    assert "Agent-guided" in client.get("/agentic").text
+    assert 'href="/agentic">Agent-guided analysis</a></li>' in report
+    assert 'href="/agentic" aria-current="page"' in report
+
+
+def test_live_tools_refuse_reads_outside_the_allowlist():
+    from oracle_impact.fixtures.demo_catalog import build_demo_catalogs
+    from oracle_impact.infrastructure.llm.live_tools import LiveToolContext, dispatch_live_tool, outstanding_reads
+    from oracle_impact.infrastructure.oracle.gateway import FixtureGateway
+
+    test_catalog, prod_catalog = build_demo_catalogs()
+    context = LiveToolContext(
+        {
+            "test": FixtureGateway("test", "fixture-test", "TEST", test_catalog),
+            "production": FixtureGateway("production", "fixture-production", "PRODUCTION", prod_catalog),
+        },
+        [_ref("DEMO.PKG_STATUS")],
+        max_depth=2,
+    )
+    caller = {"env": "test", "owner": "DEMO", "name": "PKG_DASHBOARD", "object_type": "PACKAGE BODY"}
+    assert "allowlist" in dispatch_live_tool("get_object_source", caller, context)["error"]
+    assert "allowlist" in dispatch_live_tool("get_grants", {"env": "test", "owner": "SYS", "name": "DBMS_SQL"}, context)["error"]
+    assert dispatch_live_tool("get_grants", {"env": "test", "owner": "demo", "name": "pkg_status"}, context)["error"] == "invalid tool arguments"
+    assert "environment" in dispatch_live_tool("get_grants", {"env": "uat", "owner": "DEMO", "name": "PKG_STATUS"}, context)["error"]
+    assert "not allowlisted" in dispatch_live_tool("run_sql", {"env": "test", "sql": "DROP TABLE X"}, context)["error"]
+    bad_type = {"env": "test", "owner": "DEMO", "name": "PKG_STATUS", "object_type": "JAVA SOURCE"}
+    assert "object type" in dispatch_live_tool("get_object_source", bad_type, context)["error"]
+    assert context.reads.sources == {}
+
+    source = dispatch_live_tool("get_package_source", {"env": "all", "owner": "DEMO", "package": "PKG_STATUS"}, context)
+    assert set(source["results"]) == {"test", "production"}
+    assert source["results"]["test"]["body"]["found"] is True
+    assert "FUNCTION" not in json.dumps(source).upper()
+
+    callers = dispatch_live_tool(
+        "get_dependencies",
+        {"env": "production", "owner": "DEMO", "object_name": "PKG_STATUS", "object_type": "PACKAGE", "direction": "referenced_by"},
+        context,
+    )
+    assert {"owner": "DEMO", "name": "PKG_DASHBOARD", "type": "PACKAGE BODY"} in callers["results"]["production"]["objects"]
+    assert dispatch_live_tool("get_object_source", caller, context)["results"]["test"]["found"] is True
+    assert any(item.tool == "get_object_status" for item in outstanding_reads(context))
+
+
+def _run_id(page: str) -> str:
+    return re.search(r"/analyses/([0-9a-f-]+)/", page).group(1)
+
+
+def test_report_offers_developer_and_support_email_drafts(tmp_path):
+    from email import message_from_bytes
+
+    client = client_for(
+        tmp_path,
+        email_developers="dev-team@example.com, not-an-address, evil@example.com\r\nBcc: spy@example.com",
+        email_support="support@example.com",
+        public_base_url="https://impact.example.com/",
+    )
+    login(client)
+    page = _analyze(client, "DEMO.PKG_BILLING")
+    run_id = _run_id(page)
+    assert f"/analyses/{run_id}/email?audience=developer" in page
+    assert f"/analyses/{run_id}/email?audience=support" in page
+    assert "Prepare email" not in client.get(f"/analyses/{run_id}/export?format=html").text
+
+    report = client.get(f"/analyses/{run_id}/export?format=json").json()
+    blockers = [item["finding_id"] for item in report["policy"]["blockers"]]
+    validations = [item["finding_id"] for item in report["policy"]["validations"]]
+    assert blockers
+
+    developer = client.get(f"/analyses/{run_id}/email?audience=developer")
+    assert developer.status_code == 200
+    assert "Must fix before deployment" in developer.text
+    assert all(finding_id in developer.text for finding_id in blockers + validations)
+    assert f"{len(blockers)} blocking item" in developer.text
+    assert "dev-team@example.com" in developer.text and "spy@example.com" not in developer.text
+    assert f"https://impact.example.com/analyses/{run_id}/report" in developer.text
+    assert "v_total := calculate_amount" not in developer.text
+
+    support = client.get(f"/analyses/{run_id}/email?audience=support")
+    assert "What we need from you" in support.text and "What developers are fixing first" in support.text
+    assert "support@example.com" in support.text
+    assert "Suggested owner" not in support.text
+    assert client.get(f"/analyses/{run_id}/email?audience=../../etc").text.count("Must fix before deployment") == 1
+
+    draft = client.get(f"/analyses/{run_id}/email.eml?audience=support")
+    assert draft.headers["content-type"].startswith("message/rfc822")
+    assert f'impact-{run_id}-support.eml' in draft.headers["content-disposition"]
+    message = message_from_bytes(draft.content)
+    assert message["X-Unsent"] == "1" and message["To"] == "support@example.com"
+    assert message["Subject"].startswith("Impact analysis for DEMO.PKG_BILLING")
+    assert "What we need from you" in message.get_payload(decode=True).decode()
+
+    assert client.get("/analyses/not-a-run/email").status_code == 404
+    assert client.get("/analyses/../etc/email.eml").status_code == 404
+
+
+def test_email_for_a_clean_report_follows_the_policy(tmp_path):
+    client = client_for(tmp_path, email_developers="", email_support="", public_base_url="")
+    login(client)
+    run_id = _run_id(_analyze(client, "DEMO.PKG_STATUS"))
+    report = client.get(f"/analyses/{run_id}/export?format=json").json()
+    assert report["policy"]["blockers"] == [] and report["policy"]["validations"] == []
+    developer = client.get(f"/analyses/{run_id}/email?audience=developer").text
+    assert "ready for review" in developer and "good news" in developer
+    assert "Must fix before deployment" not in developer and "Please test or justify" not in developer
+    assert "No recipients are configured" in developer
+    assert "OIA_PUBLIC_BASE_URL" in developer
 
 
 def _analyze(client, package: str) -> str:

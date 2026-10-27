@@ -146,6 +146,97 @@ _LEGACY_BODY = """PACKAGE BODY pkg_legacy AS
 END pkg_legacy;
 """
 
+# PKG_DISPATCH keeps the same signature. Test adds dynamic SQL, a sequence and a
+# function Production does not have, a different error contract, and AUTHID CURRENT_USER.
+# QUOTE_BOOK is a synonym in both environments; Production follows it across a database link.
+_DISPATCH_SPEC_PROD = """PACKAGE pkg_dispatch AS
+  queue_full EXCEPTION;
+  PROCEDURE send_batch(
+    p_code IN VARCHAR2
+  );
+END pkg_dispatch;
+"""
+
+_DISPATCH_SPEC_TEST = """PACKAGE pkg_dispatch AUTHID CURRENT_USER AS
+  batch_rejected EXCEPTION;
+  PROCEDURE send_batch(
+    p_code IN VARCHAR2
+  );
+END pkg_dispatch;
+"""
+
+_DISPATCH_BODY_PROD = """PACKAGE BODY pkg_dispatch AS
+  e_closed EXCEPTION;
+  PRAGMA EXCEPTION_INIT(e_closed, -20100);
+
+  PROCEDURE send_batch(
+    p_code IN VARCHAR2
+  ) IS
+    v_quote NUMBER;
+  BEGIN
+    SELECT quote
+      INTO v_quote
+      FROM quote_book
+     WHERE code = p_code;
+    IF v_quote IS NULL THEN
+      RAISE_APPLICATION_ERROR(-20001, 'Quote is closed');
+    END IF;
+  EXCEPTION
+    WHEN e_closed THEN
+      RAISE;
+  END send_batch;
+END pkg_dispatch;
+"""
+
+_DISPATCH_BODY_TEST = """PACKAGE BODY pkg_dispatch AS
+  e_closed EXCEPTION;
+  PRAGMA EXCEPTION_INIT(e_closed, -20110);
+
+  PROCEDURE send_batch(
+    p_code IN VARCHAR2
+  ) IS
+    v_quote NUMBER;
+    v_id NUMBER;
+    v_batch NUMBER;
+    v_sql VARCHAR2(200);
+  BEGIN
+    SELECT quote
+      INTO v_quote
+      FROM quote_book
+     WHERE code = p_code;
+    v_id := dispatch_seq.NEXTVAL;
+    v_batch := next_batch(p_code);
+    v_sql := 'UPDATE demo.outbox SET state = :1 WHERE id = :2';
+    EXECUTE IMMEDIATE v_sql USING 'SENT', v_id;
+    IF v_quote IS NULL THEN
+      RAISE_APPLICATION_ERROR(-20041, 'Batch was rejected');
+    END IF;
+  EXCEPTION
+    WHEN e_closed THEN
+      RAISE;
+  END send_batch;
+END pkg_dispatch;
+"""
+
+_MAILER_SPEC = """PACKAGE pkg_mailer AS
+  PROCEDURE deliver(p_code IN VARCHAR2);
+END pkg_mailer;
+"""
+
+_MAILER_BODY = """PACKAGE BODY pkg_mailer AS
+  PROCEDURE deliver(p_code IN VARCHAR2) IS
+  BEGIN
+    pkg_dispatch.send_batch(p_code);
+  END deliver;
+END pkg_mailer;
+"""
+
+_NEXT_BATCH = """FUNCTION next_batch(p_code IN VARCHAR2) RETURN NUMBER IS
+BEGIN
+  RETURN 1;
+END;
+"""
+
 
 def _status_arguments(include_history: bool) -> list[Argument]:
     rows = [
@@ -155,6 +246,57 @@ def _status_arguments(include_history: bool) -> list[Argument]:
     if include_history:
         rows.append(_arg("GET_EMPLOYEE_STATUS", "P_INCLUDE_HISTORY", 2, "BOOLEAN", defaulted=True))
     return rows
+
+
+def _dispatch_arguments() -> list[Argument]:
+    return [_arg("SEND_BATCH", "P_CODE", 1, "VARCHAR2")]
+
+
+def _outbox_table() -> dict:
+    return {
+        "columns": [
+            Column(name="ID", data_type="NUMBER", nullable=False),
+            Column(name="STATE", data_type="VARCHAR2"),
+        ],
+        "constraints": [Constraint(name="PK_OUTBOX", constraint_type="P", columns=["ID"])],
+        "triggers": [Trigger(name="TRG_OUTBOX_AUDIT", trigger_type="AFTER EACH ROW", event="UPDATE")],
+    }
+
+
+def _quote_table() -> dict:
+    return {
+        "columns": [
+            Column(name="CODE", data_type="VARCHAR2", nullable=False),
+            Column(name="QUOTE", data_type="NUMBER"),
+        ],
+        "constraints": [Constraint(name="PK_QUOTE_BOOK", constraint_type="P", columns=["CODE"])],
+        "triggers": [],
+    }
+
+
+def _install_dispatch(catalog: Catalog, test_copy: bool) -> None:
+    """Production copy, or the Test copy when test_copy is true."""
+    spec = _DISPATCH_SPEC_TEST if test_copy else _DISPATCH_SPEC_PROD
+    body = _DISPATCH_BODY_TEST if test_copy else _DISPATCH_BODY_PROD
+    catalog.add_source("DEMO", "PKG_DISPATCH", "PACKAGE", spec)
+    catalog.add_source("DEMO", "PKG_DISPATCH", "PACKAGE BODY", body)
+    catalog.add_arguments("DEMO", "PKG_DISPATCH", _dispatch_arguments())
+    catalog.add_source("DEMO", "PKG_MAILER", "PACKAGE", _MAILER_SPEC)
+    catalog.add_source("DEMO", "PKG_MAILER", "PACKAGE BODY", _MAILER_BODY)
+    catalog.add_dependency(("DEMO", "PKG_MAILER", "PACKAGE BODY"), ("DEMO", "PKG_DISPATCH", "PACKAGE"))
+    catalog.add_dependency(("DEMO", "PKG_DISPATCH", "PACKAGE BODY"), ("DEMO", "QUOTE_BOOK", "SYNONYM"))
+    catalog.add_table("DEMO", "OUTBOX", **_outbox_table())
+    catalog.add_grant("DEMO", "PKG_DISPATCH", "DEMO_APP", "EXECUTE")
+    if test_copy:
+        catalog.add_synonym("DEMO", "QUOTE_BOOK", "REF", "QUOTE_BOOK_T")
+        catalog.add_table("REF", "QUOTE_BOOK_T", **_quote_table())
+        catalog.add_dependency(("DEMO", "PKG_DISPATCH", "PACKAGE BODY"), ("DEMO", "DISPATCH_SEQ", "SEQUENCE"))
+        catalog.add_dependency(("DEMO", "PKG_DISPATCH", "PACKAGE BODY"), ("DEMO", "NEXT_BATCH", "FUNCTION"))
+        catalog.add_object("DEMO", "DISPATCH_SEQ", "SEQUENCE")
+        catalog.add_source("DEMO", "NEXT_BATCH", "FUNCTION", _NEXT_BATCH)
+        catalog.add_grant("DEMO", "PKG_DISPATCH", "DEMO_DISPATCHER", "EXECUTE")
+    else:
+        catalog.add_synonym("DEMO", "QUOTE_BOOK", "REMOTE", "QUOTE_BOOK", "FINANCE")
 
 
 def _billing_arguments(extended: bool) -> list[Argument]:
@@ -236,26 +378,7 @@ def build_demo_catalogs() -> tuple[Catalog, Catalog]:
         "PLS-00306: wrong number or types of arguments in call to 'CREATE_INVOICE'",
         position=5,
     )
+    _install_dispatch(prod, test_copy=False)
+    _install_dispatch(test, test_copy=True)
     return test, prod
 
-
-def build_autumn_catalog() -> Catalog:
-    """Staging copy: PKG_STATUS was promoted from Test, PKG_BILLING was not."""
-    autumn = Catalog()
-    autumn.add_source("DEMO", "PKG_STATUS", "PACKAGE", _STATUS_SPEC_TEST)
-    autumn.add_source("DEMO", "PKG_STATUS", "PACKAGE BODY", _STATUS_BODY_TEST)
-    autumn.add_arguments("DEMO", "PKG_STATUS", _status_arguments(True))
-    autumn.add_source("DEMO", "PKG_BILLING", "PACKAGE", _BILLING_SPEC_PROD)
-    autumn.add_source("DEMO", "PKG_BILLING", "PACKAGE BODY", _BILLING_BODY_PROD)
-    autumn.add_arguments("DEMO", "PKG_BILLING", _billing_arguments(False))
-    autumn.add_source("DEMO", "PKG_DASHBOARD", "PACKAGE", "PACKAGE pkg_dashboard AS PROCEDURE show_status(p_employee_id IN NUMBER); END;")
-    autumn.add_source("DEMO", "PKG_DASHBOARD", "PACKAGE BODY", _DASHBOARD_BODY)
-    autumn.add_source("DEMO", "PKG_LEGACY", "PACKAGE", "PACKAGE pkg_legacy AS PROCEDURE submit_bill(p_customer_id IN NUMBER, p_bill_date IN DATE); END;")
-    autumn.add_source("DEMO", "PKG_LEGACY", "PACKAGE BODY", _LEGACY_BODY)
-    autumn.add_dependency(("DEMO", "PKG_STATUS", "PACKAGE BODY"), ("DEMO", "EMPLOYEE_STATUS", "TABLE"))
-    autumn.add_dependency(("DEMO", "PKG_DASHBOARD", "PACKAGE BODY"), ("DEMO", "PKG_STATUS", "PACKAGE"))
-    autumn.add_dependency(("DEMO", "PKG_BILLING", "PACKAGE BODY"), ("DEMO", "CUSTOMER_BILLS", "TABLE"))
-    autumn.add_dependency(("DEMO", "PKG_LEGACY", "PACKAGE BODY"), ("DEMO", "PKG_BILLING", "PACKAGE"))
-    autumn.add_table("DEMO", "EMPLOYEE_STATUS", **_employee_table())
-    autumn.add_table("DEMO", "CUSTOMER_BILLS", **_bills_table())
-    return autumn

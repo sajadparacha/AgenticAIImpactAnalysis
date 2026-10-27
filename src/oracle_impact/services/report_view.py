@@ -10,7 +10,7 @@ import re
 from collections import Counter
 from datetime import datetime
 
-from oracle_impact.infrastructure.llm.plain_text import ai_sources, issue_list, review_lines
+from oracle_impact.infrastructure.llm.plain_text import ai_sources, blind_spot_leads, issue_list, review_lines
 from oracle_impact.models.enums import Recommendation
 from oracle_impact.models.report import ObjectDiff, Report
 
@@ -38,13 +38,13 @@ CATEGORY_LABELS = {
     "interface": "Interface",
     "business": "Business rules",
     "data": "Data",
+    "dependency": "Dependencies",
     "transaction": "Transactions",
     "security": "Security",
     "coverage": "Coverage gap",
     "other": "Other",
 }
 TABS = ("overview", "findings", "objects", "source", "dependencies", "validation", "audit")
-MODES = ("developer", "support")
 STAGES = (
     ("queued", "Queued"),
     ("snapshotting", "Source snapshot"),
@@ -54,6 +54,16 @@ STAGES = (
     ("validating", "Recommendation"),
     ("completed", "Complete"),
 )
+AGENTIC_STAGES = (
+    ("queued", "Queued"),
+    ("investigating", "Agentic review"),
+    ("snapshotting", "Source snapshot"),
+    ("comparing", "Code comparison"),
+    ("dependencies", "Dependencies"),
+    ("validating", "Recommendation"),
+    ("completed", "Complete"),
+)
+_TOOL_ENVIRONMENTS = {"test": "Test", "production": "Production", "all": "All connected"}
 CONTEXT_LINES = 3
 TOP_FINDINGS = 5
 
@@ -85,6 +95,13 @@ _TOOL_LABELS = {
     "get_dependencies": "Dependencies",
     "get_table_metadata": "Table definition",
     "get_procedure_arguments": "Procedure arguments",
+    "get_arguments": "Procedure arguments",
+    "get_object_status": "Object status",
+    "get_grants": "Grants",
+    "get_compile_errors": "Compile errors",
+    "read_source_lines": "Source lines",
+    "read_synonym": "Synonym target",
+    "check_object": "Object exists",
 }
 
 
@@ -96,43 +113,7 @@ def build_report_view(report: Report, status: dict | None = None, decision: dict
     view = _base_view(report, status)
     apply_decision(view, report, decision or offline_context(report))
     view["session"] = session or {"role": None, "csrf": "", "approvals_enabled": False, "interactive": False}
-    view["comparison_sets"] = _comparison_sets(report, view)
     return view
-
-
-def _comparison_sets(report: Report, view: dict) -> list[dict]:
-    labels = view["environment_labels"]
-    sets = [
-        {
-            "key": "test:production",
-            "label": f"{labels['test']} → {labels['production']}",
-            "source_label": labels["test"],
-            "target_label": labels["production"],
-            "source_role": "proposed",
-            "target_role": "baseline",
-            "diffs": view["diffs"],
-            "primary": True,
-        }
-    ]
-    for number, comparison in enumerate(report.comparisons, start=1):
-        diffs = []
-        for index, diff in enumerate(comparison.diffs):
-            item = _diff(number * 1000 + index, diff)
-            item["findings"] = []
-            diffs.append(item)
-        sets.append(
-            {
-                "key": comparison.key,
-                "label": f"{comparison.source_label} → {comparison.target_label}",
-                "source_label": comparison.source_label,
-                "target_label": comparison.target_label,
-                "source_role": comparison.source_environment,
-                "target_role": comparison.target_environment,
-                "diffs": diffs,
-                "primary": False,
-            }
-        )
-    return sets
 
 
 def _base_view(report: Report, status: dict | None) -> dict:
@@ -216,6 +197,7 @@ def _base_view(report: Report, status: dict | None) -> dict:
         "diffs": diffs,
         "dependencies": dependencies,
         "ai": _ai(report, issues),
+        "ai_leads": blind_spot_leads(report),
         "unverified": _unverified(report, deterministic, issues),
         "tests": _tests(rows),
         "audit": _audit(report, status, diffs),
@@ -249,25 +231,13 @@ def initial_state(view: dict, params) -> dict:
         obj = (changed or keys or [""])[0]
     line = str(params.get("line") or "")
     side = str(params.get("side") or "t")
-    mode = str(params.get("mode") or "")
-    state = {
+    return {
         "tab": tab,
         "finding": finding,
         "object": obj,
         "line": int(line) if line.isdigit() else None,
         "side": side if side in {"t", "p"} else "t",
-        "mode": mode if mode in MODES else "developer",
     }
-    cmp = str(params.get("cmp") or "")
-    if cmp and cmp != "test:production" and any(item["key"] == cmp for item in view.get("comparison_sets", [])):
-        state["cmp"] = cmp
-    return state
-
-
-def active_comparison(view: dict, state: dict) -> dict:
-    sets = view.get("comparison_sets") or []
-    wanted = state.get("cmp") or "test:production"
-    return next((item for item in sets if item["key"] == wanted), sets[0] if sets else {"key": "test:production", "diffs": view["diffs"], "primary": True})
 
 
 def format_timestamp(value: str | None) -> str:
@@ -461,6 +431,7 @@ def _row(finding, *, level, category, headline, where, source, note, ai_reviewed
         "recommended_action": finding.recommended_action if source != "ai" else "",
         "proposed_tests": list(finding.proposed_tests) if source != "ai" else [],
         "snippets": len(attributes.get("test_snippets") or []),
+        "action_scripts": list(attributes.get("action_scripts") or []) if source != "ai" else [],
         "diff_link": diff_link,
         "dependencies": [],
         "search": search,
@@ -477,6 +448,7 @@ def _category(change_category: str) -> str:
         "interface": "interface",
         "business_logic": "business",
         "data": "data",
+        "dependency": "dependency",
         "transaction": "transaction",
         "exception": "transaction",
         "error_contract": "interface",
@@ -774,6 +746,29 @@ def _tests(rows: list[dict]) -> list[dict]:
     return items
 
 
+_PHASE_FINDING = re.compile(r"^(F-[0-9A-F]{8})(?: (critical|high|medium|low|informational) ([a-z_]+))?: (.+)$", re.S)
+_PHASE_ENVIRONMENT = re.compile(r"^(test|production) (.+)$", re.S)
+
+
+def _phase_line(line: str, finding_ids: set[str]) -> dict:
+    parsed = {"text": line, "finding_id": "", "linked": False, "severity": "", "category": "", "environment": ""}
+    match = _PHASE_FINDING.match(line)
+    if match:
+        finding_id, severity, category, text = match.groups()
+        parsed.update(
+            finding_id=finding_id,
+            linked=finding_id in finding_ids,
+            severity=severity or "",
+            category=(category or "").replace("_", " ").capitalize(),
+            text=text,
+        )
+        line = text
+    match = _PHASE_ENVIRONMENT.match(line)
+    if match:
+        parsed.update(environment=_TOOL_ENVIRONMENTS[match.group(1)], text=match.group(2))
+    return parsed
+
+
 def _audit(report: Report, status: dict | None, diffs: list[dict]) -> dict:
     steps = (status or {}).get("steps") or {}
     thoughts = {
@@ -781,8 +776,10 @@ def _audit(report: Report, status: dict | None, diffs: list[dict]) -> dict:
         for item in (status or {}).get("activity") or []
         if item.get("kind") == "thought"
     }
+    agentic = report.run_mode == "agentic"
+    finding_ids = {finding.id for finding in report.findings}
     phases = []
-    for key, label in STAGES:
+    for key, label in AGENTIC_STAGES if agentic else STAGES:
         step = steps.get(key)
         summary = (step or {}).get("summary") or ""
         phases.append(
@@ -792,20 +789,24 @@ def _audit(report: Report, status: dict | None, diffs: list[dict]) -> dict:
                 "recorded": step is not None,
                 "started_at": (step or {}).get("started_at") or "",
                 "summary": "" if summary in thoughts else summary,
-                "lines": [line for line in (step or {}).get("lines") or [] if line not in thoughts],
+                "lines": [
+                    _phase_line(line, finding_ids)
+                    for line in (step or {}).get("lines") or []
+                    if line not in thoughts
+                ],
             }
         )
     tools = []
     for index, entry in enumerate(report.tool_log, start=1):
         env, _, name = str(entry.get("target") or "").partition(" ")
-        if env not in {"test", "production"}:
+        if env not in _TOOL_ENVIRONMENTS:
             env, name = "", f"{env} {name}".strip()
         tool = str(entry.get("tool") or "")
         tools.append(
             {
                 "index": index,
                 "tool": _TOOL_LABELS.get(tool, tool.replace("_", " ").capitalize() or "Unknown tool"),
-                "environment": {"test": "Test", "production": "Production"}.get(env, "Not recorded"),
+                "environment": _TOOL_ENVIRONMENTS.get(env, "Not recorded"),
                 "target": name or "Not recorded",
                 "ok": bool(entry.get("ok", True)),
                 "bytes": entry.get("result_bytes"),
@@ -821,6 +822,10 @@ def _audit(report: Report, status: dict | None, diffs: list[dict]) -> dict:
             {"label": "Report schema version", "value": report.report_version},
             {"label": "Source captured at", "value": format_timestamp(report.created_at)},
             {"label": "Analyzer", "value": report.analyzer},
+            {
+                "label": "Run mode",
+                "value": "Agentic read order, deterministic recommendation" if agentic else "Deterministic",
+            },
             {
                 "label": "AI investigator",
                 "value": f"Used ({report.model_name})" if report.ai_used and report.model_name else "Used" if report.ai_used else "Did not run",
@@ -850,4 +855,6 @@ def _audit(report: Report, status: dict | None, diffs: list[dict]) -> dict:
             event for event in (status or {}).get("events") or [] if str(event.get("message") or "") not in thoughts
         ],
         "tools": tools,
+        "agentic": agentic,
+        "agent_summary": report.agent_summary,
     }

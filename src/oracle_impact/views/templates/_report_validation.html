@@ -1,8 +1,8 @@
 {% import "_report_macros.html" as ui %}
 <section class="rv-panel" id="validation" {{ ui.panel_attrs(state, 'validation', print_mode) }}>
   <div class="panel-head">
-    <h2>Validation and approval</h2>
-    <p class="hint">What the policy requires, what has been validated and reviewed, and what a person has decided. Readiness is recomputed from these records each time the page loads. Names are self-declared because development sign-in does not identify a person.</p>
+    <h2>Tests and approval</h2>
+    <p class="hint">What the policy requires before deployment, and the tests this report recommends. Test results and reviewer decisions are not recorded here. Share the report or the email, and track replies outside this application.</p>
   </div>
 
   <div class="three-up">
@@ -69,40 +69,19 @@
         </tbody>
       </table>
     </div>
-    <p class="hint">Open a finding to record a validation result or a reviewer decision.</p>
+    <p class="hint">These stay listed for the life of this report. A fix-and-reanalyze item clears only when a new analysis no longer raises it.</p>
     {% else %}
     <p class="empty">No rule in policy {{ d.policy_version }} applies to these findings.</p>
     {% endif %}
   </div>
 
-  <div class="card" id="regression-tests">
-    <div class="card-head"><h3>Regression test tracking <span class="count-chip">{{ view.review.validations | length }}</span></h3>{{ ui.kind('verified') }}</div>
-    {% if view.review.validations %}
-    <div class="table-scroll">
-      <table class="data-table compact">
-        <thead><tr><th scope="col">Test case</th><th scope="col">Finding</th><th scope="col">Environment</th><th scope="col">Status</th><th scope="col">Evidence</th><th scope="col">Reviewer</th><th scope="col">Recorded</th></tr></thead>
-        <tbody>
-          {% for record in view.review.validations %}
-          <tr>
-            <td>{{ record.test_case }}{% if record.notes %}<span class="row-meta">{{ record.notes }}</span>{% endif %}</td>
-            <td><a href="{{ ui.finding_href(view, record.finding_id) }}" data-open-finding="{{ record.finding_id }}">{{ record.finding_id }}</a></td>
-            <td>{{ record.environment_label }}</td>
-            <td>{{ ui.tag(record.status_label, {'passed': 'success', 'failed': 'danger', 'blocked': 'warning'}.get(record.status, 'neutral')) }}</td>
-            <td>{{ record.evidence or 'Not given' }}</td>
-            <td>{{ record.assigned_reviewer or 'Not assigned' }}</td>
-            <td>{{ record.updated_at[:16] | replace('T', ' ') }} UTC<span class="row-meta">{{ record.updated_by.name }} (self-declared){% if record.executed_at %} · executed {{ record.executed_at }}{% endif %}</span></td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    {% else %}
-    <p class="empty">No test result has been recorded. Results are entered by people; this application does not run tests or import results.</p>
-    {% endif %}
+  {% if view.external_checks %}
+  <div class="card">
     {% for check in view.external_checks %}
     <p class="hint">{{ check.name }}: {{ 'evaluated' if check.evaluated else 'not evaluated' }}. {{ check.reason }}</p>
     {% endfor %}
   </div>
+  {% endif %}
 
   {% set c = view.coverage %}
   <div class="card" id="coverage">
@@ -157,14 +136,14 @@
 
   <div class="card">
     <div class="card-head"><h3>Recommended tests</h3></div>
-    <p class="notice notice-info">These tests are recommendations. The application does not run them; record results against each finding.</p>
+    <p class="notice notice-info">These tests are recommendations for the people who receive this report. The application does not run them and does not record the results.</p>
     {% if view.tests %}
     {% macro test_group(group) %}
       <li>
         <p class="check-head">{{ ui.sev(group.level, group.level_label) }} <a href="{{ ui.finding_href(view, group.finding_id) }}" data-open-finding="{{ group.finding_id }}">{{ group.finding_id }}</a> <span>{{ group.headline }}</span></p>
         <ul class="step-list-plain">
           {% for step in group.steps %}<li><span class="attrib{{ ' attrib-ai' if step.from_ai }}">{{ step.attribution }}</span> {{ step.text }}</li>{% endfor %}
-          {% if group.snippets %}<li class="dev-only"><a href="/analyses/{{ view.run_id }}/findings/{{ group.finding_id }}">{{ group.snippets }} SQL test script{{ 's' if group.snippets != 1 }} to run in Test</a></li>{% endif %}
+          {% if group.snippets %}<li><a href="/analyses/{{ view.run_id }}/findings/{{ group.finding_id }}">{{ group.snippets }} SQL test script{{ 's' if group.snippets != 1 }} to run in Test</a></li>{% endif %}
         </ul>
       </li>
     {% endmacro %}
@@ -230,6 +209,29 @@
     {% endif %}
     {% endif %}
   </div>
+
+  {% if view.ai_leads %}
+  <div class="card" id="ai-leads">
+    <div class="card-head"><h3>AI leads on what the checks could not see</h3>{{ ui.kind('ai') }}</div>
+    <p class="hint">The automatic checks cannot follow SQL that is built while the program runs, or synonyms that point to other objects. The AI looked into each one. These are unverified leads: they do not block or clear deployment, and the original item stays open until a test or a person confirms it.</p>
+    <ul class="test-groups">
+      {% for lead in view.ai_leads %}
+      <li>
+        <p class="check-head">{{ ui.evidence('potential', 'Potential · AI, not verified') }} <a href="/analyses/{{ view.run_id }}/findings/{{ lead.id }}">{{ lead.id }}</a> <span>{{ lead.kind_label }}: {{ lead.subject }}</span>{% if lead.reviews %} <span class="hint">· open item <a href="{{ ui.finding_href(view, lead.reviews) }}" data-open-finding="{{ lead.reviews }}">{{ lead.reviews }}</a></span>{% endif %}</p>
+        <p>{{ lead.explanation }}</p>
+        {% if lead.targets %}<p><strong>Possibly uses:</strong> {% for target in lead.targets %}<code class="obj">{{ target }}</code>{{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
+        {% if lead.checked %}
+        <p class="hint">What the AI looked up in the dictionary:</p>
+        <ul class="step-list-plain">{% for item in lead.checked %}<li><code class="obj">{{ item.object }}</code> in {{ view.environment_labels.get(item.environment, item.environment) }}: {{ item.result }}</li>{% endfor %}</ul>
+        {% endif %}
+        {% if lead.test %}<p><span class="attrib attrib-ai">AI suggestion, review before use</span> {{ lead.test }}</p>{% endif %}
+        {% if lead.unknowns %}<p class="hint">Not checked: {{ lead.unknowns }}</p>{% endif %}
+        {% if lead.citation_unconfirmed %}<p class="hint">The AI's line references could not be matched to the captured source.</p>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
 
   <div class="card" id="limitations">
     <h3>Known limitations</h3>

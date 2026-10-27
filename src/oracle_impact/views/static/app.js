@@ -1,5 +1,5 @@
-const stageOrder = ["queued", "snapshotting", "comparing", "dependencies", "investigating", "validating", "completed"];
-const stageLabels = {
+const defaultStageOrder = ["queued", "snapshotting", "comparing", "dependencies", "investigating", "validating", "completed"];
+const defaultStageLabels = {
   queued: "Queued",
   snapshotting: "Source snapshot",
   comparing: "Code comparison",
@@ -9,6 +9,14 @@ const stageLabels = {
   completed: "Complete",
   failed: "Failed",
 };
+
+// The page lists stages in run order; agentic runs investigate before the snapshot.
+const pageStages = [...document.querySelectorAll("[data-stage]")];
+const stageOrder = pageStages.length ? pageStages.map((item) => item.dataset.stage) : defaultStageOrder;
+const stageLabels = { ...defaultStageLabels };
+pageStages.forEach((item) => {
+  stageLabels[item.dataset.stage] = item.textContent.trim();
+});
 
 function paintProgress(payload) {
   const current = payload.status || "";
@@ -117,7 +125,11 @@ if (root) {
       }
       const payload = await response.json();
       paintProgress(payload);
-      if (payload.status === "completed" || payload.status === "failed") {
+      if (payload.status === "completed") {
+        window.location.assign(root.dataset.reportUrl);
+        return;
+      }
+      if (payload.status === "failed") {
         window.location.reload();
         return;
       }
@@ -130,7 +142,7 @@ if (root) {
 document.querySelectorAll("[data-copy]").forEach((button) => {
   button.addEventListener("click", async () => {
     const block = button.closest(".sql-snippet");
-    const pre = block ? block.querySelector("pre") : null;
+    const pre = button.dataset.copy ? document.querySelector(button.dataset.copy) : block ? block.querySelector("pre") : null;
     const text = pre ? pre.textContent : "";
     if (pre) {
       const range = document.createRange();
@@ -155,8 +167,8 @@ if (reportRoot && !reportRoot.classList.contains("is-print")) {
 
 function initReport(root) {
   const PAGE = 50;
-  const FILTER_KEYS = ["q", "sev", "type", "cat", "src", "ev", "ec", "val", "blk", "env", "chg", "drivers"];
-  const SELECT_KEYS = ["sev", "type", "cat", "src", "ev", "ec", "val", "blk", "env", "chg"];
+  const FILTER_KEYS = ["q", "sev", "type", "cat", "src", "ev", "ec", "blk", "env", "chg", "drivers"];
+  const SELECT_KEYS = ["sev", "type", "cat", "src", "ev", "ec", "blk", "env", "chg"];
   const DEP_KEYS = ["dq", "dir", "impact"];
   const EDGE_KEYS = ["eq", "edir", "eprov", "etype"];
   const LEGACY = { comparison: "source", changes: "findings", dependencies: "dependencies", ai: "validation", risk: "overview", limitations: "validation", validation: "validation", audit: "audit", overview: "overview",
@@ -175,12 +187,10 @@ function initReport(root) {
   const highlighted = new WeakSet();
   const state = {
     tab: root.dataset.tab || "overview",
-    mode: root.dataset.mode || "developer",
     finding: root.dataset.finding || "",
     object: root.dataset.object || "",
     line: root.dataset.line || "",
     side: root.dataset.side || "t",
-    cmp: root.dataset.cmp || "",
     filters: {},
     dep: {},
     edge: {},
@@ -196,9 +206,6 @@ function initReport(root) {
     state.object = params.get("object") || state.object;
     state.line = params.get("line") || "";
     state.side = params.get("side") === "p" ? "p" : "t";
-    if (params.get("mode")) {
-      state.mode = params.get("mode") === "support" ? "support" : "developer";
-    }
     FILTER_KEYS.forEach((key) => { state.filters[key] = params.get(key) || ""; });
     DEP_KEYS.forEach((key) => { state.dep[key] = params.get(key) || ""; });
     EDGE_KEYS.forEach((key) => { state.edge[key] = params.get(key) || ""; });
@@ -211,7 +218,6 @@ function initReport(root) {
   function writeUrl(push) {
     const params = new URLSearchParams();
     if (state.tab !== "overview") params.set("tab", state.tab);
-    if (state.mode === "support") params.set("mode", "support");
     if (state.finding) params.set("finding", state.finding);
     if (state.tab === "source" && state.object) {
       params.set("object", state.object);
@@ -220,7 +226,6 @@ function initReport(root) {
         params.set("side", state.side);
       }
     }
-    if (state.cmp) params.set("cmp", state.cmp);
     FILTER_KEYS.forEach((key) => { if (state.filters[key]) params.set(key, state.filters[key]); });
     DEP_KEYS.forEach((key) => { if (state.dep[key]) params.set(key, state.dep[key]); });
     EDGE_KEYS.forEach((key) => { if (state.edge[key]) params.set(key, state.edge[key]); });
@@ -259,19 +264,6 @@ function initReport(root) {
       next.focus();
       showTab(next.dataset.tabLink, { push: true });
     });
-  });
-
-  function setMode(mode, write = true) {
-    state.mode = mode === "support" ? "support" : "developer";
-    root.dataset.mode = state.mode;
-    root.querySelectorAll("[data-mode-set]").forEach((button) => {
-      button.setAttribute("aria-pressed", String(button.dataset.modeSet === state.mode));
-    });
-    try { window.localStorage.setItem("oia.reportMode", state.mode); } catch (error) { /* storage unavailable */ }
-    if (write) writeUrl(false);
-  }
-  root.querySelectorAll("[data-mode-set]").forEach((button) => {
-    button.addEventListener("click", () => setMode(button.dataset.modeSet));
   });
 
   function rowMatches(row) {
@@ -680,18 +672,11 @@ function initReport(root) {
 
   window.addEventListener("popstate", () => {
     readUrl();
-    setMode(state.mode, false);
     applyAll();
   });
 
   readUrl();
   const params = new URLSearchParams(window.location.search);
-  if (!params.get("mode")) {
-    let stored = "";
-    try { stored = window.localStorage.getItem("oia.reportMode") || ""; } catch (error) { /* storage unavailable */ }
-    if (stored) state.mode = stored;
-  }
-  setMode(state.mode, false);
   const hash = window.location.hash.slice(1);
   if (hash && !params.get("tab")) {
     if (hash.startsWith("issue-")) {

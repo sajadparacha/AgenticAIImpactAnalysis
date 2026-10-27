@@ -7,15 +7,15 @@
 {% set d = view.decision %}
 {% set ready = d.readiness %}
 {% set interactive = view.session.interactive and not print_mode %}
-<article class="rv{{ ' is-print' if print_mode else '' }}" data-report data-base="{{ view.base_url }}" data-mode="{{ state.mode }}"
+<article class="rv{{ ' is-print' if print_mode else '' }}" data-report data-base="{{ view.base_url }}"
   data-tab="{{ state.tab }}" data-finding="{{ state.finding }}" data-object="{{ state.object }}"
-  data-line="{{ state.line or '' }}" data-side="{{ state.side }}" data-cmp="{{ state.cmp or '' }}">
+  data-line="{{ state.line or '' }}" data-side="{{ state.side }}">
 
   <header class="rv-head">
     <nav class="crumbs" aria-label="Breadcrumb">
       <ol>
-        <li><a href="/">Dashboard</a></li>
-        <li><a href="/analyses/{{ view.run_id }}">Analysis run</a></li>
+        {% if report.run_mode == "agentic" %}<li><a href="/agentic">Agent-guided analysis</a></li>{% else %}<li><a href="/">Hybrid analysis</a></li>{% endif %}
+        <li><a href="/analyses/{{ view.run_id }}/report?tab=audit#phases" title="Run log for {{ view.run_id }}">Run {{ view.run_id[:8] }}</a></li>
         <li aria-current="page">Impact report</li>
       </ol>
     </nav>
@@ -25,10 +25,6 @@
         <p class="rv-scope">{{ view.header.packages | join(" · ") }}</p>
       </div>
       <div class="rv-actions">
-        <div class="mode-switch" role="group" aria-label="Presentation">
-          <button type="button" data-mode-set="developer" aria-pressed="{{ 'true' if state.mode == 'developer' else 'false' }}">Developer</button>
-          <button type="button" data-mode-set="support" aria-pressed="{{ 'true' if state.mode == 'support' else 'false' }}">Support</button>
-        </div>
         <details class="menu exports">
           <summary>Export</summary>
           <ul>
@@ -37,6 +33,15 @@
             <li><a href="/analyses/{{ view.run_id }}/export?format=json">Download JSON</a></li>
           </ul>
         </details>
+        {% if not print_mode %}
+        <details class="menu emails">
+          <summary>Prepare email</summary>
+          <ul>
+            <li><a href="/analyses/{{ view.run_id }}/email?audience=developer">For developers</a></li>
+            <li><a href="/analyses/{{ view.run_id }}/email?audience=support">For support</a></li>
+          </ul>
+        </details>
+        {% endif %}
       </div>
     </div>
     <dl class="rv-meta">
@@ -47,10 +52,6 @@
         <dd class="env-flow">
           <span class="env env-test" title="{{ view.header.proposed.role }}">{{ view.header.proposed.label }}<small>{{ view.header.proposed.database_id }}</small></span>
           <span aria-hidden="true">→</span><span class="sr-only">compared with</span>
-          {% for info in report.environments if info.role == 'staging' %}
-          <span class="env env-stage" title="Staging, compared for promotion state">{{ info.label }}<small>{{ info.database_id }}</small></span>
-          <span aria-hidden="true">→</span><span class="sr-only">then</span>
-          {% endfor %}
           <span class="env env-prod" title="{{ view.header.baseline.role }}">{{ view.header.baseline.label }}<small>{{ view.header.baseline.database_id }}</small></span>
         </dd>
       </div>
@@ -94,7 +95,7 @@
     </ul>
     <div class="decision-basis">
       <h3>Analyzer recommendation: {{ rec.label }}</h3>
-      <p class="hint">{{ rec.summary }} Readiness adds recorded validation, reviewer decisions, drift, coverage, and freshness to it. The AI investigator cannot change either.</p>
+      <p class="hint">{{ rec.summary }} Readiness adds required tests, drift, coverage, and freshness to it. The AI investigator cannot change either.</p>
       {% set linked = rec.reasons | selectattr('id') | list %}
       {% if linked %}
       <ul>
@@ -159,7 +160,7 @@
     <article class="metric">
       <p class="metric-label">Evidence</p>
       <p class="metric-value">{{ (m.evidence | selectattr('status', 'equalto', 'confirmed') | first).count }}<span class="metric-of"> confirmed</span></p>
-      <p class="metric-note">{% for item in m.evidence if item.status != 'confirmed' %}{{ item.count }} {{ 'potential' if item.status == 'potential' else 'not checkable' }} · {% endfor %}Test-validated: {{ 'not recorded' if m.verified is none else m.verified }}</p>
+      <p class="metric-note">{% for item in m.evidence if item.status != 'confirmed' %}{{ item.count }} {{ 'potential' if item.status == 'potential' else 'not checkable' }}{{ ' · ' if not loop.last }}{% endfor %}</p>
     </article>
   </section>
   </details>
@@ -173,7 +174,7 @@
       ('objects', 'Changed objects', view.counts.objects),
       ('source', 'Source comparison', view.counts.changed_objects),
       ('dependencies', 'Dependencies', view.counts.dependencies),
-      ('validation', 'Validation & approval', none),
+      ('validation', 'Tests & approval', none),
       ('audit', 'Audit trail', none)
     ] %}
     <a role="tab" id="tab-{{ key }}" href="{{ view.base_url }}?tab={{ key }}" data-tab-link="{{ key }}"

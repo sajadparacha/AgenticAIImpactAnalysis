@@ -37,13 +37,6 @@ class Settings(BaseSettings):
     prod_oracle_password: str = ""
     prod_oracle_edition: str = ""
 
-    autumn_oracle_label: str = "AUTUMN"
-    autumn_oracle_dsn: str = ""
-    autumn_oracle_user: str = ""
-    autumn_oracle_password: str = ""
-    autumn_oracle_edition: str = ""
-    fixture_autumn: bool = True
-
     approver_access_token: str = ""
     state_dir: Path | None = None
     policy_file: Path | None = None
@@ -60,6 +53,14 @@ class Settings(BaseSettings):
     max_dependency_depth: int = 2
     analysis_timeout_seconds: int = 120
     llm_token_budget: int = 8000
+    agentic_token_budget: int = 60000
+    agentic_max_tool_calls_per_run: int = 80
+    blind_spot_max_questions: int = 6
+    blind_spot_max_tool_calls: int = 12
+
+    email_developers: str = ""
+    email_support: str = ""
+    public_base_url: str = ""
 
     using_default_token: bool = Field(default=False, exclude=True)
 
@@ -67,6 +68,14 @@ class Settings(BaseSettings):
     @classmethod
     def _blank_path_is_unset(cls, value: object) -> object:
         return None if isinstance(value, str) and not value.strip() else value
+
+    @field_validator("public_base_url")
+    @classmethod
+    def _http_base_url(cls, value: str) -> str:
+        value = value.strip().rstrip("/")
+        if value and not value.startswith(("http://", "https://")):
+            raise ValueError("OIA_PUBLIC_BASE_URL must start with http:// or https://")
+        return value
 
     def model_post_init(self, __context: object) -> None:
         object.__setattr__(
@@ -82,10 +91,6 @@ class Settings(BaseSettings):
     @property
     def production_oracle_configured(self) -> bool:
         return bool(self.prod_oracle_dsn and self.prod_oracle_user)
-
-    @property
-    def autumn_oracle_configured(self) -> bool:
-        return bool(self.autumn_oracle_dsn and self.autumn_oracle_user)
 
     @property
     def approvals_enabled(self) -> bool:

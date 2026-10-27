@@ -5,7 +5,6 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from oracle_impact.models.assessment import (
-    Comparison,
     CompilationSummary,
     CoverageSummary,
     DependencyEdgeRecord,
@@ -113,7 +112,6 @@ class Report(BaseModel):
     tool_log: list[dict] = Field(default_factory=list)
     environments: list[EnvironmentInfo] = Field(default_factory=list)
     object_states: list[ObjectState] = Field(default_factory=list)
-    comparisons: list[Comparison] = Field(default_factory=list)
     compilation: CompilationSummary | None = None
     coverage: CoverageSummary | None = None
     transaction_profiles: list[TransactionProfile] = Field(default_factory=list)
@@ -121,3 +119,6 @@ class Report(BaseModel):
     dependency_edges: list[DependencyEdgeRecord] = Field(default_factory=list)
     policy: PolicyEvaluation | None = None
     external_checks: list[ExternalCheck] = Field(default_factory=list)
+    run_mode: str = "deterministic"
+    agent_summary: str = ""
+    """What the agentic investigator said it read. It is not a finding and never changes the recommendation."""

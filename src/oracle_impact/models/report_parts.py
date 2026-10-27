@@ -1,4 +1,4 @@
-"""Diff records shared by the report and the extra environment comparisons."""
+"""Source diff records used by the report."""
 
 from pydantic import BaseModel, Field
 

@@ -28,6 +28,14 @@ def test_catalog_is_select_only():
         assert _FORBIDDEN.search(sql) is None, name
 
 
+def test_synonym_read_uses_the_fixed_catalog_and_the_dba_rewrite():
+    from oracle_impact.infrastructure.oracle.queries import apply_dictionary_views
+
+    sql = QUERIES["synonym_target"]
+    assert ":owner" in sql and ":name" in sql
+    assert "dba_synonyms" in apply_dictionary_views(sql, "dba")
+
+
 def test_live_gateway_does_not_interpolate_sql():
     source = Path_text()
     assert 'f"SELECT' not in source

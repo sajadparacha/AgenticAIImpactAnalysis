@@ -12,10 +12,10 @@ class RunStore:
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
 
-    def create(self, run_id: str, packages: list[str], model: str = "") -> None:
+    def create(self, run_id: str, packages: list[str], model: str = "", mode: str = "deterministic") -> None:
         path = self._dir(run_id)
         path.mkdir(parents=True, exist_ok=False)
-        self.write_json(run_id, "request.json", {"packages": packages, "model": model})
+        self.write_json(run_id, "request.json", {"packages": packages, "model": model, "mode": mode})
         self.write_status(run_id, "queued", detail="Analysis queued.")
 
     def write_status(
@@ -92,6 +92,7 @@ class RunStore:
                     "run_id": path.name,
                     "status": status.get("status", "unknown"),
                     "packages": request.get("packages", []),
+                    "mode": request.get("mode") or "deterministic",
                     "model": report.get("model_name") or "",
                     "recommendation": report.get("recommendation_label", ""),
                     "created_at": report.get("created_at", ""),

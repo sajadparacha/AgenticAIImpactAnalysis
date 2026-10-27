@@ -43,6 +43,12 @@ Unit and integration coverage was then extended to **225 passed**:
 - `tests/test_services_units.py`: decision service input rules, approval staleness, business impact levels, history ordering and freshness, policy file overrides and item states, deep-link state, sessions and CSRF, snapshot capture, Oracle gateway binds and the read-only query catalog.
 - `tests/test_integration.py`: unauthenticated access, login roles and logout, security headers, 404 and 400 routes, fixed action messages, persistence across an app restart, and a positive recommendation reached through a policy file plus recorded validations.
 
+AUTUMN was later removed from the project. Reports compare Test with Production only; older saved reports still load, and any AUTUMN data in them is ignored. Result: **251 passed**.
+
+The run progress page and the report now act as two stages of one run. The progress page opens the report as soon as the run completes, and `/analyses/{id}` redirects to the report for completed runs. Failed runs stay on the progress page with their error. The report breadcrumb links to the run log in the Audit tab (`?tab=audit#phases`), and the progress page has its own breadcrumb with the short run ID. Result: **252 passed**.
+
+The Audit tab's "Analysis phases" section now has its own full-width card. Its detail lines no longer wrap after every word. Finding IDs, severity, category, and environment are shown as tags, and long lists scroll inside their box. Result: **253 passed**.
+
 Screenshots `screenshots/decision-*.png` were captured at 1440 px from a local fixture server with seeded records (a baseline, a manifest entry, two mappings, one validation, one approval). Pages were fetched with a session cookie and rendered by headless Chrome without the script, so they show the server-rendered state.
 
 ## Remaining defects
@@ -50,7 +56,7 @@ Screenshots `screenshots/decision-*.png` were captured at 1440 px from a local f
 - WeasyPrint was not installed, so the PDF path in this environment is the fpdf2 fallback. The exported PDF contains the recommendation, finding ids, and the limitations section; it is a plain print layout.
 - Real database behavior is unverified.
 - Development authentication remains a shared token. Approval records carry self-declared names.
-- `ALL_ERRORS` reads, AUTUMN connections, and the registry have only been exercised against fixtures.
+- `ALL_ERRORS` reads and the registry have only been exercised against fixtures.
 
 ## Phase status
 

@@ -31,7 +31,7 @@ from oracle_impact.services import readiness
 from oracle_impact.services.business_impact import business_impact
 from oracle_impact.services.decision_service import ActionError, DecisionService, actor, offline_context
 from oracle_impact.services.history import age_text, previous_run, related_runs, stale_reason, superseded_by
-from oracle_impact.services.report_view import active_comparison, initial_state
+from oracle_impact.services.report_view import initial_state
 from oracle_impact.services.snapshot_service import SnapshotService
 from tests.support import run_catalogs, settings
 
@@ -64,37 +64,6 @@ def test_actor_names_are_trimmed_and_never_blank():
     assert actor("analyst", "  Dana   Lee ") == {"role": "analyst", "name": "Dana Lee", "declared": True}
     assert actor("analyst", "")["name"] == "Not given"
     assert len(actor("analyst", "x" * 500)["name"]) == 80
-
-
-def test_validation_input_is_checked_before_anything_is_saved(tmp_path):
-    report = _demo(tmp_path, "DEMO.PKG_BILLING")
-    service = _service(tmp_path)
-    finding = report.findings[0].id
-    base = {"finding_id": finding, "status": "passed", "environment": "test", "test_case": "Case", "evidence": "LOG-1"}
-    assert _code(lambda: service.record_validation(report, {**base, "finding_id": "F-NOPE"}, ANALYST)) == "unknown_finding"
-    assert _code(lambda: service.record_validation(report, {**base, "status": "maybe"}, ANALYST)) == "invalid_status"
-    assert _code(lambda: service.record_validation(report, {**base, "environment": "dev"}, ANALYST)) == "invalid_environment"
-    assert _code(lambda: service.record_validation(report, {**base, "test_case": "  "}, ANALYST)) == "test_case_required"
-    assert _code(lambda: service.record_validation(report, {**base, "evidence": ""}, ANALYST)) == "evidence_required"
-    assert _code(lambda: service.record_validation(report, {**base, "test_case": "x" * 201}, ANALYST)) == "too_long"
-    assert _code(lambda: service.record_validation(report, {**base, "record_id": "V-NOPE"}, ANALYST)) == "unknown_record"
-    assert service.reviews.read(report.run_id)["validations"] == []
-
-    pending = service.record_validation(report, {**base, "status": "not_executed", "evidence": ""}, ANALYST)
-    service.record_validation(report, {**base, "record_id": pending["id"]}, ANALYST)
-    [saved] = service.reviews.read(report.run_id)["validations"]
-    assert saved["id"] == pending["id"] and saved["status"] == "passed" and saved["evidence"] == "LOG-1"
-
-
-def test_review_decisions_need_a_reason_when_they_change_the_outcome(tmp_path):
-    report = _demo(tmp_path, "DEMO.PKG_BILLING")
-    service = _service(tmp_path)
-    finding = report.findings[0].id
-    assert _code(lambda: service.record_review(report, {"finding_id": finding, "decision": "approve"}, ANALYST)) == "invalid_decision"
-    assert _code(lambda: service.record_review(report, {"finding_id": finding, "decision": "not_an_issue"}, ANALYST)) == "reason_required"
-    assert _code(lambda: service.record_review(report, {"finding_id": "F-NOPE", "decision": "accepted"}, ANALYST)) == "unknown_finding"
-    service.record_review(report, {"finding_id": finding, "decision": "accepted"}, ANALYST)
-    assert service.reviews.read(report.run_id)["reviews"][0]["decision"] == "accepted"
 
 
 def test_approval_rules_and_staleness(tmp_path):
@@ -131,7 +100,7 @@ def test_baseline_and_manifest_input_rules(tmp_path):
     assert _code(lambda: service.set_baseline(report, {"environment": "test", "object_key": key, "note": "x"}, APPROVER)) == "invalid_environment"
     assert _code(lambda: service.set_baseline(report, {"environment": "production", "object_key": key, "note": ""}, APPROVER)) == "reason_required"
     assert _code(lambda: service.set_baseline(report, {"environment": "production", "object_key": "X.Y:PACKAGE", "note": "x"}, APPROVER)) == "unknown_object"
-    assert _code(lambda: service.set_baseline(report, {"environment": "autumn", "object_key": "all", "note": "x"}, APPROVER)) == "unknown_object"
+    assert _code(lambda: service.set_baseline(report, {"environment": "autumn", "object_key": "all", "note": "x"}, APPROVER)) == "invalid_environment"
     recorded = service.set_baseline(report, {"environment": "production", "object_key": "all", "note": "Release 12"}, APPROVER)
     assert {item["object_type"] for item in recorded} == {"PACKAGE", "PACKAGE BODY"}
     assert all(item["source_run"] == report.run_id and item["sha256"] for item in recorded)
@@ -291,29 +260,19 @@ def _validation(status, record_id="V1", finding_id="F-1"):
 
 
 @pytest.mark.parametrize(
-    "resolution, validations, reviews, expected",
+    "resolution, validations, reviews",
     [
-        (readiness.FIX_AND_REANALYZE, [_validation("passed")], [{"finding_id": "F-1", "decision": "accepted"}], "unresolved"),
-        (readiness.VALIDATION_AND_REVIEW, [_validation("passed")], [], "awaiting_review"),
-        (readiness.VALIDATION_AND_REVIEW, [_validation("passed")], [{"finding_id": "F-1", "decision": "accepted"}], "resolved"),
-        (readiness.VALIDATION_AND_REVIEW, [], [{"finding_id": "F-1", "decision": "accepted"}], "unresolved"),
-        (readiness.VALIDATION_AND_REVIEW, [], [{"finding_id": "F-1", "decision": "not_an_issue"}], "resolved"),
-        (readiness.VALIDATION, [_validation("passed")], [{"finding_id": "F-1", "decision": "confirmed_issue"}], "unresolved"),
-        (readiness.VALIDATION, [_validation("passed")], [], "resolved"),
-        (readiness.VALIDATION, [_validation("passed"), _validation("failed", "V2")], [], "unresolved"),
-        (readiness.VALIDATION, [_validation("failed"), _validation("passed")], [], "resolved"),
-        (readiness.VALIDATION, [_validation("passed", finding_id="F-2")], [], "unresolved"),
-        (readiness.VALIDATION, [_validation("blocked")], [], "unresolved"),
+        (readiness.FIX_AND_REANALYZE, [_validation("passed")], [{"finding_id": "F-1", "decision": "accepted"}]),
+        (readiness.VALIDATION_AND_REVIEW, [_validation("passed")], [{"finding_id": "F-1", "decision": "accepted"}]),
+        (readiness.VALIDATION_AND_REVIEW, [], [{"finding_id": "F-1", "decision": "not_an_issue"}]),
+        (readiness.VALIDATION, [_validation("passed")], []),
+        (readiness.VALIDATION, [_validation("passed"), _validation("failed", "V2")], [{"finding_id": "F-1", "decision": "confirmed_issue"}]),
+        (readiness.VALIDATION, [], []),
     ],
 )
-def test_item_status_counts_only_recorded_facts(resolution, validations, reviews, expected):
-    assert readiness.item_status(_item(resolution), validations, reviews)["state"] == expected
-
-
-def test_latest_review_wins():
-    reviews = [{"finding_id": "F-1", "decision": "confirmed_issue"}, {"finding_id": "F-1", "decision": "not_an_issue"}]
-    status = readiness.item_status(_item(readiness.VALIDATION), [], reviews)
-    assert status["state"] == "resolved" and status["decision"] == "not_an_issue"
+def test_item_status_ignores_stored_validation_and_review(resolution, validations, reviews):
+    status = readiness.item_status(_item(resolution), validations, reviews)
+    assert status["state"] == "unresolved" and status["recorded"] == 0 and status["decision"] == ""
 
 
 def test_policy_file_overrides(tmp_path):
@@ -370,21 +329,16 @@ def test_policy_for_recomputes_only_for_reports_without_a_saved_policy(tmp_path)
 # ----------------------------------------------------------------- report view state
 
 
-def test_initial_state_keeps_known_comparisons_only():
+def test_initial_state_keeps_known_values_only():
     view = {
         "rows": [{"id": "F-1"}],
         "diffs": [{"key": "a", "state": "unchanged"}, {"key": "b", "state": "modified"}],
-        "comparison_sets": [{"key": "test:production", "diffs": []}, {"key": "autumn:production", "diffs": []}],
     }
     state = initial_state(view, {"cmp": "autumn:production", "line": "12", "side": "p", "mode": "support"})
-    assert state["cmp"] == "autumn:production" and state["object"] == "b"
-    assert (state["line"], state["side"], state["mode"]) == (12, "p", "support")
-    assert active_comparison(view, state)["key"] == "autumn:production"
-    assert "cmp" not in initial_state(view, {"cmp": "test:production"})
-    unknown = initial_state(view, {"cmp": "prod:../../etc", "line": "x", "side": "q"})
-    assert "cmp" not in unknown and unknown["line"] is None and unknown["side"] == "t"
-    assert active_comparison(view, unknown)["key"] == "test:production"
-    assert active_comparison({"diffs": []}, {})["primary"] is True
+    assert state["object"] == "b" and "cmp" not in state
+    assert (state["line"], state["side"]) == (12, "p") and "mode" not in state
+    unknown = initial_state(view, {"line": "x", "side": "q"})
+    assert unknown["line"] is None and unknown["side"] == "t"
 
 
 # ----------------------------------------------------------------- security and configuration
@@ -443,27 +397,13 @@ def _gateway(environment, catalog):
 def test_snapshot_records_every_environment_and_capture_drift():
     test_catalog = _catalog()
     test_catalog.drift.add(("APP", "PKG", "PACKAGE BODY"))
-    service = SnapshotService(_gateway("test", test_catalog), _gateway("production", _catalog()), _gateway("autumn", _catalog()))
-    assert service.environments == ["test", "production", "autumn"]
+    service = SnapshotService(_gateway("test", test_catalog), _gateway("production", _catalog()))
+    assert service.environments == ["test", "production"]
     snapshot = service.capture([PackageRef(owner="APP", name="PKG")])
-    assert len(snapshot.objects) == 6
+    assert len(snapshot.objects) == 4
     body = snapshot.find("test", "APP", "PKG", "PACKAGE BODY")
     assert body.drift is True and body.verification_sha256 != body.sha256
     assert any("changed during capture" in item for item in snapshot.limitations)
-
-
-def test_unreachable_autumn_is_omitted_with_a_limitation():
-    class Down:
-        label = "AUTUMN"
-        database_id = "autumn"
-
-        def fetch_source(self, owner, name, object_type):
-            raise OracleUnavailable("down")
-
-    service = SnapshotService(_gateway("test", _catalog()), _gateway("production", _catalog()), Down())
-    snapshot = service.capture([PackageRef(owner="APP", name="PKG")])
-    assert {item.environment for item in snapshot.objects} == {"test", "production"}
-    assert sum("AUTUMN environment could not be read" in item for item in snapshot.limitations) == 1
 
 
 def test_snapshot_distinguishes_missing_and_unreadable_packages():

@@ -62,6 +62,8 @@ def classify(finding: Finding) -> tuple[str, str]:
         if attributes.get("new_table_unverified"):
             return "DATA-NEW-TABLE", "High for writes, medium for reads: the table is newly referenced and its Production structure or migration order is unverified."
         return "DATA-MODIFIED-DML", "High when the statement involves amounts or rates, otherwise medium: a changed write alters stored data."
+    if category == "dependency":
+        return "DEP-MISSING-OBJECT", "Critical: an object the new code depends on does not exist in Production, so the body cannot compile there."
     if category == "transaction":
         if attributes.get("partial_commit_hazard"):
             return "TXN-PARTIAL-COMMIT", "High: a commit placement change can leave earlier statements durable when a later one fails."

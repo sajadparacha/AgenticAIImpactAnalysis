@@ -38,11 +38,13 @@
     <p>{{ finding.evidence }}</p>
   </section>
 
-  {% if not is_ai and (finding.recommended_action != lines.todo or finding.proposed_tests | length > 1) %}
+  {% set scripts = [] if is_ai else (finding.attributes.get('action_scripts') or []) %}
+  {% if not is_ai and (finding.recommended_action != lines.todo or finding.proposed_tests | length > 1 or scripts) %}
   <section class="finding-section">
-    {% if finding.recommended_action != lines.todo %}
+    {% if finding.recommended_action != lines.todo or scripts %}
     <h2>Recommended action</h2>
-    <p>{{ finding.recommended_action }}</p>
+    {% if finding.recommended_action != lines.todo %}<p>{{ finding.recommended_action }}</p>{% endif %}
+    {% if scripts %}{% include "_action_scripts.html" %}{% endif %}
     {% endif %}
     {% if finding.proposed_tests | length > 1 %}
     <h2>Tests to run</h2>

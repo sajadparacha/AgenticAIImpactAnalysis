@@ -17,6 +17,7 @@ DICTIONARY_VIEWS = (
     "all_cons_columns",
     "all_triggers",
     "all_errors",
+    "all_synonyms",
 )
 
 
@@ -52,6 +53,12 @@ FROM all_errors
 WHERE owner = :owner
   AND name = :name
 ORDER BY type, sequence
+""",
+    "synonym_target": """
+SELECT table_owner, table_name, db_link
+FROM all_synonyms
+WHERE owner = :owner
+  AND synonym_name = :name
 """,
     "source": """
 SELECT line, text

@@ -5,6 +5,7 @@ are computed, never typed into templates, and missing data is labelled as
 not recorded rather than filled in.
 """
 
+from oracle_impact.analysis.compilation import missing_errors_text
 from oracle_impact.models.report import Report
 from oracle_impact.services.change_classification import LABELS as CLASS_LABELS
 from oracle_impact.services.change_classification import TONES as CLASS_TONES
@@ -16,24 +17,9 @@ from oracle_impact.services.readiness import (
 )
 
 EVIDENCE_CLASSES = {
-    "test_validated": "Test-validated",
-    "human_reviewed": "Human-reviewed",
     "deterministic": "Deterministic, verified",
     "hypothesis": "Unverified hypothesis",
     "ai": "AI interpretation",
-}
-VALIDATION_LABELS = {
-    "passed": "Passed",
-    "failed": "Failed",
-    "blocked": "Blocked",
-    "not_executed": "Not executed",
-    "none": "No validation recorded",
-}
-REVIEW_LABELS = {
-    "accepted": "Accepted",
-    "not_an_issue": "Not an issue",
-    "confirmed_issue": "Confirmed issue",
-    "needs_information": "Needs information",
 }
 APPROVAL_LABELS = {"approved": "Approved", "rejected": "Rejected", "on_hold": "On hold"}
 ITEM_STATES = {
@@ -50,7 +36,7 @@ CHANGE_TYPE_LABELS = {
     "absent": "Not present",
     "unknown": "Not readable",
 }
-ENVIRONMENT_LABELS = {"test": "Test", "autumn": "AUTUMN", "production": "Production"}
+ENVIRONMENT_LABELS = {"test": "Test", "production": "Production"}
 COVERAGE_LABELS = {
     "analyzed": "Analyzed",
     "partial": "Partially analyzed",
@@ -70,7 +56,7 @@ def apply_decision(view: dict, report: Report, ctx: dict) -> None:
     items.update({entry["item"].finding_id: {**entry, "kind": "validation"} for entry in readiness["validations"]})
     by_object = {item["key"]: item for item in classification["objects"]}
     for row in view["rows"]:
-        _decorate_row(row, items, review, by_object, labels)
+        _decorate_row(row, items, by_object, labels)
     view["filters"].update(_filters(view["rows"]))
     hold = _hold_rows(view, readiness, items)
     approval = ctx["approval"]
@@ -95,7 +81,7 @@ def apply_decision(view: dict, report: Report, ctx: dict) -> None:
     view["transactions"] = _transactions(report, view)
     view["performance"] = _performance(report)
     view["business"] = ctx["business"]
-    view["review"] = _review(view, review, readiness, labels)
+    view["review"] = _review(view, review, readiness)
     view["approval"] = {**approval, "labels": APPROVAL_LABELS}
     view["history"] = _history(ctx["history"])
     view["registry"] = {"baselines": ctx["baselines"], "manifest": ctx["manifest"], "events": ctx["registry_events"]}
@@ -104,47 +90,16 @@ def apply_decision(view: dict, report: Report, ctx: dict) -> None:
     view["external_checks"] = [item.model_dump() for item in report.external_checks]
     view["environment_labels"] = labels
     view["audit"]["metadata"].append({"label": "Blocking policy", "value": readiness["policy_version"]})
-    for info in report.environments:
-        if info.role == "staging":
-            view["audit"]["metadata"].append({"label": "Staging comparison", "value": f"{info.label} · {info.database_id}"})
     view["counts"]["objects"] = sum(1 for item in view["objects"] if item["change_type"] not in {"unchanged", "absent"})
-    view["unverified"]["tests_recorded"] = bool(review["validations"])
-    view["metrics"]["verified"] = sum(1 for row in view["rows"] if row["evidence_class"] == "test_validated") if review["validations"] else None
 
 
 def _env_labels(report: Report) -> dict[str, str]:
-    labels = {"test": report.test_environment.label, "production": report.production_environment.label}
-    for info in report.environments:
-        if info.role == "staging":
-            labels["autumn"] = info.label
-    for state in report.object_states:
-        for item in state.environments:
-            labels.setdefault(item.environment, item.label)
-    labels.setdefault("autumn", "AUTUMN")
-    return labels
+    return {"test": report.test_environment.label, "production": report.production_environment.label}
 
 
-def _decorate_row(row: dict, items: dict, review: dict, by_object: dict, labels: dict) -> None:
+def _decorate_row(row: dict, items: dict, by_object: dict, labels: dict) -> None:
     finding = row["finding"]
-    validations = [record for record in review["validations"] if record.get("finding_id") == row["id"]]
-    reviews = [record for record in review["reviews"] if record.get("finding_id") == row["id"]]
-    latest_review = reviews[-1] if reviews else None
-    statuses = {record.get("status") for record in validations}
-    if "failed" in statuses:
-        validation_state = "failed"
-    elif "passed" in statuses:
-        validation_state = "passed"
-    elif "blocked" in statuses:
-        validation_state = "blocked"
-    elif validations:
-        validation_state = "not_executed"
-    else:
-        validation_state = "none"
-    if validation_state == "passed":
-        evidence_class = "test_validated"
-    elif latest_review is not None:
-        evidence_class = "human_reviewed"
-    elif row["source"] == "ai":
+    if row["source"] == "ai":
         evidence_class = "ai"
     elif row["evidence_status"] == "confirmed":
         evidence_class = "deterministic"
@@ -160,12 +115,6 @@ def _decorate_row(row: dict, items: dict, review: dict, by_object: dict, labels:
         {
             "evidence_class": evidence_class,
             "evidence_class_label": EVIDENCE_CLASSES[evidence_class],
-            "validation_state": validation_state,
-            "validation_label": VALIDATION_LABELS[validation_state],
-            "review_state": (latest_review or {}).get("decision", ""),
-            "review_label": REVIEW_LABELS.get((latest_review or {}).get("decision", ""), "Not reviewed"),
-            "validations": validations,
-            "reviews": reviews,
             "policy": policy,
             "policy_state_label": ITEM_STATES[policy["state"]][0] if policy else "",
             "policy_state_tone": ITEM_STATES[policy["state"]][1] if policy else "",
@@ -192,7 +141,6 @@ def _filters(rows: list[dict]) -> dict:
 
     return {
         "evidence_class": present("evidence_class", EVIDENCE_CLASSES),
-        "validation": present("validation_state", VALIDATION_LABELS),
         "blocking": [
             {"value": value, "label": label}
             for value, label in (("blocker", "Blocks deployment"), ("validation", "Requires validation"), ("none", "Does not block"))
@@ -423,12 +371,11 @@ def _next_actions(view: dict, readiness: dict, classification: dict, approval: d
     ]
     if pending:
         actions.append(
-            {"text": f"Run and record validation for {len(pending)} finding{'s' if len(pending) != 1 else ''}.", "tab": "validation", "kind": "validation"}
-        )
-    awaiting = [entry for entry in readiness["blockers"] + readiness["validations"] if entry["state"] == "awaiting_review"]
-    if awaiting:
-        actions.append(
-            {"text": f"Record a reviewer decision for {len(awaiting)} validated finding{'s' if len(awaiting) != 1 else ''}.", "tab": "validation", "kind": "review"}
+            {
+                "text": f"Test {len(pending)} finding{'s' if len(pending) != 1 else ''} before deployment. Results are not recorded in this report.",
+                "tab": "validation",
+                "kind": "validation",
+            }
         )
     if readiness["open_drift"]:
         actions.append(
@@ -459,7 +406,7 @@ def _objects(report: Report, view: dict, classification: dict, labels: dict) -> 
         order = ("critical", "high", "medium", "low", "informational")
         top = min((level for level in levels if level in order), key=order.index, default="")
         envs = []
-        for env in ("test", "autumn", "production"):
+        for env in ("test", "production"):
             captured = next((entry for entry in item["environments"] if entry["environment"] == env), None)
             if captured is None:
                 continue
@@ -487,11 +434,6 @@ def _objects(report: Report, view: dict, classification: dict, labels: dict) -> 
                 "diff_key": item["key"] if diff else "",
                 "added": diff["added"] if diff else None,
                 "removed": diff["removed"] if diff else None,
-                "autumn_label": {
-                    "matches_test": "Promoted (matches Test)",
-                    "matches_production": "Not promoted (matches Production)",
-                    "differs_from_both": "Differs from Test and Production",
-                }.get(item["autumn"] or "", "Not captured"),
             }
         )
     if not rows:
@@ -515,8 +457,6 @@ def _objects(report: Report, view: dict, classification: dict, labels: dict) -> 
                     "diff_key": diff["key"],
                     "added": diff["added"],
                     "removed": diff["removed"],
-                    "autumn": None,
-                    "autumn_label": "Not captured",
                     "manifest": None,
                     "baseline": {"state": "not_recorded", "entry": None},
                 }
@@ -540,6 +480,7 @@ def _compilation(report: Report, labels: dict) -> dict:
             {
                 **item.model_dump(),
                 "environment_label": labels.get(item.environment, item.environment),
+                "errors_note": _sentence(missing_errors_text(summary, item.environment, item.owner, item.name)),
                 "errors": [
                     error.model_dump()
                     for error in summary.errors
@@ -549,6 +490,10 @@ def _compilation(report: Report, labels: dict) -> dict:
             for item in invalid
         ],
     }
+
+
+def _sentence(text: str) -> str:
+    return text[:1].upper() + text[1:]
 
 
 def _transactions(report: Report, view: dict) -> list[dict]:
@@ -674,7 +619,7 @@ def _performance(report: Report) -> dict:
     return {"recorded": True, **perf.model_dump()}
 
 
-def _review(view: dict, review: dict, readiness: dict, labels: dict) -> dict:
+def _review(view: dict, review: dict, readiness: dict) -> dict:
     rows_by_id = {row["id"]: row for row in view["rows"]}
 
     def described(entry: dict, kind: str) -> dict:
@@ -691,25 +636,10 @@ def _review(view: dict, review: dict, readiness: dict, labels: dict) -> dict:
             "resolution": RESOLUTIONS.get(item.resolution, ""),
         }
 
-    validations = []
-    for record in review["validations"]:
-        row = rows_by_id.get(record.get("finding_id"))
-        validations.append(
-            {
-                **record,
-                "status_label": VALIDATION_LABELS.get(record.get("status", ""), record.get("status", "")),
-                "environment_label": labels.get(record.get("environment", ""), record.get("environment", "")),
-                "headline": row["headline"] if row else "",
-            }
-        )
     return {
         "items": [described(entry, "blocker") for entry in readiness["blockers"]]
         + [described(entry, "validation") for entry in readiness["validations"]],
-        "validations": validations,
-        "reviews": [{**record, "decision_label": REVIEW_LABELS.get(record.get("decision", ""), "")} for record in review["reviews"]],
         "events": list(reversed(review["events"])),
-        "validation_statuses": VALIDATION_LABELS,
-        "review_decisions": REVIEW_LABELS,
     }
 
 

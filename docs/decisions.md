@@ -54,7 +54,7 @@ Lowercase and quoted identifiers are rejected so names can be validated before t
 
 ## Readiness is separate from the analyzer recommendation
 
-The three analyzer labels (Not recommended, Requires further investigation, Eligible for review after testing) are kept unchanged for existing exports and tests. Readiness (Deployment recommended, Deployment on hold, Indeterminate) is a second, policy-driven state that also considers recorded validations, reviewer decisions, drift, coverage, and freshness. A positive readiness never implies approval.
+The three analyzer labels (Not recommended, Requires further investigation, Eligible for review after testing) are kept unchanged for existing exports and tests. Readiness (Deployment recommended, Deployment on hold, Indeterminate) is a second, policy-driven state that also considers required tests, drift, coverage, and freshness. It does not store validation results or reviewer decisions. A positive readiness never implies approval.
 
 ## Unclassified changes do not hold deployment
 
@@ -62,11 +62,11 @@ Holding every difference without a manifest entry would put every existing team 
 
 ## Fix-and-reanalyze blockers cannot be cleared by people
 
-Interface breaks, missing Production objects, compile failures, and snapshot drift are facts about the captured code. A reviewer note does not change them, so only a new analysis can clear them. Transaction hazards need both a passed validation and an accepted review.
+Interface breaks, missing Production objects, compile failures, and snapshot drift are facts about the captured code. Only a new analysis can clear them. Transaction hazards and other required tests stay open on the report. People track the test or the review outside this application, usually by replying to the email.
 
 ## Approval needs a second token
 
-Approvals, baselines, manifest entries, and business mappings change what other people see. They need `OIA_APPROVER_ACCESS_TOKEN`, which must differ from the application token. When it is not set, those actions are disabled rather than open to every user. Validations and reviewer decisions can be recorded by any signed-in user.
+Approvals, baselines, manifest entries, and business mappings change what other people see. They need `OIA_APPROVER_ACCESS_TOKEN`, which must differ from the application token. When it is not set, those actions are disabled rather than open to every user. Validation results and reviewer decisions are not recorded.
 
 ## Performance is not evaluated
 

@@ -66,8 +66,6 @@ def test_unauthenticated_writes_are_redirected_and_record_nothing(tmp_path):
     before = _review(owner, run_id)["readiness"]
     anonymous = _client(tmp_path)
     for path, fields in (
-        (f"/analyses/{run_id}/validations", {"finding_id": "F-1", "status": "passed"}),
-        (f"/analyses/{run_id}/reviews", {"decision": "accepted"}),
         (f"/analyses/{run_id}/approval", {"decision": "approved", "notes": "x"}),
         (f"/analyses/{run_id}/baseline", {"environment": "production", "object_key": "all", "note": "x"}),
         (f"/analyses/{run_id}/manifest", {"object_key": "all", "change_ref": "x"}),
@@ -128,15 +126,15 @@ def test_missing_runs_and_unknown_formats(tmp_path):
     assert client.get("/analyses/nope/export").status_code == 404
     assert client.get(f"/analyses/{run_id}/findings/F-NOPE").status_code == 404
     assert client.get(f"/analyses/{run_id}/export?format=docx").status_code == 400
-    assert _post(client, "/analyses/nope/validations", finding_id="F-1").status_code == 404
+    assert _post(client, "/analyses/nope/approval", decision="on_hold", notes="x").status_code == 404
     assert _post(client, "/registry/manifest/M-1/withdraw", run_id="nope", reason="x").status_code == 404
 
 
 def test_action_messages_are_fixed_texts(tmp_path):
     client = _sign_in(_client(tmp_path))
     run_id = _start(client, "DEMO.PKG_STATUS")
-    saved = client.get(f"/analyses/{run_id}/report?msg=validation_saved").text
-    assert "Validation result saved." in saved
+    saved = client.get(f"/analyses/{run_id}/report?msg=approval_saved").text
+    assert "Deployment decision recorded." in saved
     error = client.get(f"/analyses/{run_id}/report?msg=too_long").text
     assert "One of the fields is too long." in error
     injected = client.get(f"/analyses/{run_id}/report?msg=<script>alert(1)</script>").text
@@ -159,26 +157,22 @@ def test_records_survive_an_application_restart(tmp_path):
     client = _sign_in(_client(tmp_path), APPROVER_TOKEN)
     run_id = _start(client, "DEMO.PKG_BILLING")
     report = client.get(f"/analyses/{run_id}/export?format=json").json()
-    finding = report["findings"][0]["id"]
-    assert _msg(_post(client, f"/analyses/{run_id}/validations", finding_id=finding, status="failed", environment="test",
-                      test_case="Invoice replay", evidence="LOG-7", actor_name="Dana")) == "validation_saved"
-    assert _msg(_post(client, f"/analyses/{run_id}/reviews", finding_id=finding, decision="confirmed_issue", reason="Reproduced")) == "review_saved"
-    assert _msg(_post(client, f"/analyses/{run_id}/approval", decision="on_hold", notes="Blockers remain.")) == "approval_saved"
+    assert _msg(_post(client, f"/analyses/{run_id}/approval", decision="on_hold", notes="Blockers remain.", actor_name="Dana")) == "approval_saved"
     assert _msg(_post(client, f"/analyses/{run_id}/manifest", object_key="DEMO.PKG_BILLING:PACKAGE BODY", change_ref="CHG-9")) == "manifest_saved"
     assert _msg(_post(client, "/mappings", object="DEMO.PKG_BILLING", application="Billing", business_process="Invoicing", criticality="critical")) == "mapping_saved"
 
     restarted = _sign_in(TestClient(create_app(settings(tmp_path, approver_access_token=APPROVER_TOKEN))))
     review = _review(restarted, run_id)
-    assert review["review"]["validations"][0]["created_by"]["name"] == "Dana"
-    assert review["review"]["reviews"][0]["decision"] == "confirmed_issue"
+    assert review["review"]["validations"] == [] and review["review"]["reviews"] == []
     assert review["approval"]["latest"]["decision"] == "on_hold"
+    assert review["approval"]["latest"]["actor"]["name"] == "Dana"
     page = restarted.get(f"/analyses/{run_id}/report?tab=audit").text
     assert "CHG-9" in restarted.get(f"/analyses/{run_id}/report?tab=objects").text
     assert "Dana" in page
     assert "Invoicing" in restarted.get("/mappings").text
 
 
-def test_policy_file_and_recorded_evidence_drive_a_positive_recommendation(tmp_path):
+def test_policy_file_can_mark_blockers_as_tests_and_they_stay_open(tmp_path):
     policy = tmp_path / "policy.json"
     policy.write_text(
         json.dumps(
@@ -199,19 +193,13 @@ def test_policy_file_and_recorded_evidence_drive_a_positive_recommendation(tmp_p
     assert readiness["decision"] == "on_hold"
     items = readiness["blockers"] + readiness["validations"]
     assert {entry["item"]["resolution"] for entry in items} == {"validation"}
+    assert all(entry["state"] == "unresolved" for entry in items)
+    assert _msg(_post(client, f"/analyses/{run_id}/approval", decision="approved", notes="All checks passed in TEST.")) == "not_recommended"
 
-    for entry in items:
-        response = _post(client, f"/analyses/{run_id}/validations", finding_id=entry["item"]["finding_id"], status="passed",
-                         environment="test", test_case=f"Check {entry['item']['rule_id']}", evidence="RUN-42")
-        assert _msg(response) == "validation_saved"
-    readiness = _review(client, run_id)["readiness"]
-    assert readiness["open_blockers"] == 0 and readiness["open_validations"] == 0
-    assert readiness["decision"] == "recommended"
-    assert _msg(_post(client, f"/analyses/{run_id}/approval", decision="approved", notes="All checks passed in TEST.")) == "approval_saved"
-
-    held = _sign_in(_client(tmp_path / "default"), APPROVER_TOKEN)
-    default_run = _start(held, "DEMO.PKG_BILLING")
-    assert _review(held, default_run)["readiness"]["decision"] == "on_hold"
+    clean = _sign_in(_client(tmp_path / "clean"), APPROVER_TOKEN)
+    status_run = _start(clean, "DEMO.PKG_STATUS")
+    assert _review(clean, status_run)["readiness"]["decision"] == "recommended"
+    assert _msg(_post(clean, f"/analyses/{status_run}/approval", decision="approved", notes="No required tests.")) == "approval_saved"
 
 
 @pytest.mark.parametrize("fmt, kind", [("json", "application/json"), ("html", "text/html")])

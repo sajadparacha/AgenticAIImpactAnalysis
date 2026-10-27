@@ -21,12 +21,13 @@ Fixture mode is the default. These packages can be analyzed without a database:
 
 - `DEMO.PKG_STATUS` — optional parameter, eligible for review after testing; readiness Deployment recommended
 - `DEMO.PKG_BILLING` — breaking interface, missing table, a commit before a later insert, and a dependent (`DEMO.PKG_LEGACY`) that no longer compiles in Test; not recommended, deployment on hold
+- `DEMO.PKG_DISPATCH` — dynamic SQL, a synonym that points at a local table in Test and across a database link in Production, a sequence and a function that exist only in Test, an `AUTHID` change, a changed error contract, and a grant Production does not have. The caller `DEMO.PKG_MAILER` still compiles. Not recommended, deployment on hold. With the investigator enabled, the dynamic SQL and the synonym become AI leads.
 
 Enter one uppercase `OWNER.PACKAGE` name per line.
 
 ## Live Oracle
 
-Set `OIA_FIXTURE_MODE=false` and provide separate read-only Test and Production credentials, and optionally AUTUMN. The accounts need `SELECT` on the dictionary views listed in `docs/architecture.md`. The application never executes PL/SQL packages and never runs statements other than the fixed `SELECT` catalog plus `SET TRANSACTION READ ONLY`.
+Set `OIA_FIXTURE_MODE=false` and provide separate read-only Test and Production credentials. The accounts need `SELECT` on the dictionary views listed in `docs/architecture.md`. The application never executes PL/SQL packages and never runs statements other than the fixed `SELECT` catalog plus `SET TRANSACTION READ ONLY`.
 
 The driver package on PyPI is `oracledb` (the python-oracledb driver). Thin mode is the default, so Instant Client is not required for a normal connection.
 
@@ -34,16 +35,22 @@ The driver package on PyPI is `oracledb` (the python-oracledb driver). Thin mode
 
 `OIA_LLM_EGRESS_ENABLED` defaults to false. No package source is sent anywhere until you set it and provide an approved OpenAI-compatible base URL, model, and API key. Organizational approval is required before that flag is turned on.
 
+There are two run modes:
+
+- **Hybrid analysis** (`/`). Python reads Test and Production itself and scores the change. When egress is enabled, the investigator then reviews the deterministic findings and writes notes. It also gets one narrow question about each item the checks could not resolve: SQL built while the program runs, and synonyms the package uses. It can read the cited source lines, read where a synonym points (`ALL_SYNONYMS`), and check whether a named object exists. Its answers appear in an "AI leads" card on the Validation tab as unverified potential items. They never block or clear deployment, and the original item stays open. `OIA_BLIND_SPOT_MAX_QUESTIONS` (default 6) and `OIA_BLIND_SPOT_MAX_TOOL_CALLS` (default 12) bound this step.
+- **Agent-guided analysis** (`/agentic`). The investigator chooses which allowlisted, read-only dictionary read comes next until a required-evidence checklist is empty. It sees short summaries of each read, not package source. The same deterministic checks then score what it collected and choose the recommendation. After scoring, it gets the same blind-spot questions as hybrid analysis, which send up to 60 source lines per read from the source it collected. Those answers are unverified leads and are never fed back into the checks. Apart from those leads the investigator adds no findings, and its closing note is shown in the audit panel only. Agentic runs have their own run budgets, `OIA_AGENTIC_MAX_TOOL_CALLS_PER_RUN` (default 80) and `OIA_AGENTIC_TOKEN_BUDGET` (default 60000), because they read every environment through the model. `OIA_MAX_TOOL_CALLS_PER_PACKAGE` and `OIA_ANALYSIS_TIMEOUT_SECONDS` still apply. Reads it does not reach within these budgets are reported as coverage gaps, and an invalid object whose ALL_ERRORS rows were not read says so instead of showing no errors. Unread package source makes readiness Indeterminate. The page refuses to start a run while egress is off.
+
 ## Deployment decision support
 
 Each report shows a readiness decision computed from the configurable blocking policy: **Deployment recommended**, **Deployment on hold**, or **Indeterminate**. It also shows four separate states (analysis completed, coverage complete, deployment recommended, human approval), the reasons deployment is on hold, and the next actions. A recommendation is never an approval.
 
-- Analysts record regression test results and reviewer decisions against findings.
-- Approvers sign in with `OIA_APPROVER_ACCESS_TOKEN` (it must differ from the app token). They record the deployment decision, trusted Production and AUTUMN baselines, approved changes (a manifest that pins the Test checksum), and business process mappings at `/mappings`.
+- The report and the email are read-only shares for developers and support. Test results and reviewer decisions are not recorded in the application.
+- Approvers sign in with `OIA_APPROVER_ACCESS_TOKEN` (it must differ from the app token). They record the deployment decision, trusted Production baselines, approved changes (a manifest that pins the Test checksum), and business process mappings at `/mappings`.
 - Changes are classified as planned, unexpected drift, or unclassified against those records.
 - Compilation readiness reads `ALL_OBJECTS` and `ALL_ERRORS`. Nothing is compiled.
-- AUTUMN (staging) is an optional third read-only connection (`OIA_AUTUMN_ORACLE_*`). Fixture mode includes an AUTUMN catalog.
-
+- Objects that only the Test version depends on (for example a new sequence or function) are looked up in Production's `ALL_OBJECTS`. A missing one blocks deployment.
+- Under **Recommended action**, a finding can carry copy-paste scripts built from its recorded evidence: `GRANT` statements for a grant Production lacks, a `DBMS_METADATA` DDL extract from Test plus a Production existence check for a missing object, `ALTER ... COMPILE` with an `ALL_ERRORS` query for invalid objects and for the callers of a changed interface, and a read-only `ALL_OBJECTS` check when existence could not be read. Each script says whether it is for Test or Production. Review actions such as business rules, error contracts, `AUTHID`, and dynamic SQL get no script. The model does not write these scripts, and the application never runs them.
+- **Prepare email** on each report builds a friendly draft from the report's open blockers, validation items, and findings, in a developer version (code detail, suggested owners, tests) and a support version (runbooks, monitoring, jobs, and what developers are fixing). Copy it, open it in a mail app, or download an unsent `.eml` draft. The application never sends mail. Set `OIA_EMAIL_DEVELOPERS`, `OIA_EMAIL_SUPPORT`, and `OIA_PUBLIC_BASE_URL` so the recipients and report link are filled in.
 `docs/architecture.md` describes the rules. `docs/known-limitations.md` lists what they cannot see.
 
 ## Reports

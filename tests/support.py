@@ -1,10 +1,13 @@
 """Shared builders for engine and regression tests."""
 
+import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from oracle_impact.config import Settings
+from oracle_impact.infrastructure.llm.investigator import Investigator
+from oracle_impact.infrastructure.llm.provider import ModelResponse, ToolCall
 from oracle_impact.infrastructure.oracle.gateway import Catalog, FixtureGateway
 from oracle_impact.infrastructure.storage.run_store import RunStore
 from oracle_impact.main import create_app
@@ -54,6 +57,10 @@ def login(client: TestClient) -> None:
 
 def run_catalogs(tmp_path: Path, packages: list[str], test_catalog: Catalog, prod_catalog: Catalog, **overrides) -> Report:
     investigator = overrides.pop("investigator", None)
+    mode = overrides.pop("mode", "deterministic")
+    if mode == "agentic":
+        overrides.setdefault("llm_egress_enabled", True)
+        overrides.setdefault("llm_model", "mock")
     configured = settings(tmp_path, **overrides)
     service = AnalysisService(
         configured,
@@ -63,7 +70,76 @@ def run_catalogs(tmp_path: Path, packages: list[str], test_catalog: Catalog, pro
         investigator=investigator,
     )
     parsed = [PackageRef(owner=item.split(".", 1)[0], name=item.split(".", 1)[1]) for item in packages]
-    run_id = service.create_run(parsed)
+    run_id = service.create_run(parsed, mode=mode)
+    service.execute(run_id)
+    payload = service.store.read_json(run_id, "report.json")
+    assert payload is not None, service.store.read_json(run_id, "status.json")
+    return Report.model_validate(payload)
+
+
+class ChecklistProvider:
+    """Scripted model for the agentic loop. It reads the checklist the loop sends back and requests
+    those reads, `batch` at a time, then sends `final`. `early_finishes` answers are sent first.
+    Checklist items for which `skip(item)` is true are never requested."""
+
+    def __init__(self, final: str = "I read every required item.", batch: int = 6, early_finishes: int = 0, skip=None) -> None:
+        self.final = final
+        self.batch = batch
+        self.early_finishes = early_finishes
+        self.skip = skip or (lambda item: False)
+        self.calls = 0
+        self.tools_seen: list[str] = []
+
+    def complete(self, messages, tools) -> ModelResponse:
+        self.calls += 1
+        self.tools_seen = [tool["function"]["name"] for tool in tools]
+        if self.early_finishes:
+            self.early_finishes -= 1
+            return ModelResponse(content="Done.", prompt_tokens=1, completion_tokens=1)
+        wanted = [item for item in _latest_checklist(messages)["next"] if not self.skip(item)]
+        if wanted:
+            calls = [ToolCall(item["tool"], item["arguments"], f"c{self.calls}-{index}") for index, item in enumerate(wanted[: self.batch])]
+            return ModelResponse(content="Reading the next required items.", tool_calls=calls, prompt_tokens=1, completion_tokens=1)
+        return ModelResponse(content=self.final, prompt_tokens=1, completion_tokens=1)
+
+
+def _latest_checklist(messages: list[dict]) -> dict:
+    for message in reversed(messages):
+        content = message.get("content") or ""
+        if message["role"] == "tool":
+            payload = json.loads(content)
+            if "checklist" in payload:
+                return payload["checklist"]
+        elif message["role"] == "user" and "{" in content:
+            return json.loads(content[content.index("{"):])
+    raise AssertionError("no checklist was sent to the model")
+
+
+def agentic_investigator(provider, max_calls_per_package: int = 500, max_calls_per_run: int = 500) -> Investigator:
+    return Investigator(
+        provider,
+        max_calls_per_package=max_calls_per_package,
+        max_calls_per_run=max_calls_per_run,
+        timeout_seconds=30,
+        token_budget=1_000_000,
+        max_depth=2,
+    )
+
+
+def run_demo(tmp_path: Path, packages: list[str], mode: str = "deterministic", investigator=None) -> Report:
+    """Run the bundled demo catalogs through AnalysisService in either mode."""
+    from oracle_impact.fixtures.demo_catalog import build_demo_catalogs
+
+    test_catalog, prod_catalog = build_demo_catalogs()
+    service = AnalysisService(
+        settings(tmp_path, llm_egress_enabled=investigator is not None, llm_model="mock" if investigator else ""),
+        RunStore(tmp_path),
+        FixtureGateway("test", "fixture-test", "TEST", test_catalog),
+        FixtureGateway("production", "fixture-production", "PRODUCTION", prod_catalog),
+        investigator=investigator,
+    )
+    parsed = [PackageRef(owner=item.split(".", 1)[0], name=item.split(".", 1)[1]) for item in packages]
+    run_id = service.create_run(parsed, mode=mode)
     service.execute(run_id)
     payload = service.store.read_json(run_id, "report.json")
     assert payload is not None, service.store.read_json(run_id, "status.json")

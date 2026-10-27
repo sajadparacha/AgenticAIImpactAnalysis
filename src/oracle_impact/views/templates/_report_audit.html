@@ -28,7 +28,7 @@
         {% endfor %}
       </ol>
       {% else %}
-      <p class="empty">No validation, review, approval, baseline, or manifest action has been recorded for this run.</p>
+      <p class="empty">No approval, baseline, or manifest action has been recorded for this run.</p>
       {% endif %}
       {% if view.approval.history %}
       <h3>Approval history</h3>
@@ -38,30 +38,47 @@
         {% endfor %}
       </ol>
       {% endif %}
-      <h3>Analysis phases</h3>
-      {% if audit.status_available %}
-      <ol class="phase-list">
-        {% for phase in audit.phases %}
-        <li class="{{ 'is-done' if phase.recorded else 'is-missing' }}">
-          <span class="phase-mark" aria-hidden="true"></span>
-          <div>
-            <p class="phase-name">{{ phase.label }} <span class="hint">{% if phase.started_at %}{{ phase.started_at[11:19] }} UTC{% elif phase.recorded %}Recorded{% else %}Not recorded{% endif %}</span></p>
-            {% if phase.summary %}<p class="hint">{{ phase.summary }}</p>{% endif %}
-            {% if phase.lines %}
-            <details class="disclosure"{% if print_mode %} open{% endif %}>
-              <summary>{{ phase.lines | length }} detail line{{ 's' if phase.lines | length != 1 }}</summary>
-              <ul>{% for line in phase.lines %}<li>{{ line }}</li>{% endfor %}</ul>
-            </details>
-            {% endif %}
-          </div>
-        </li>
-        {% endfor %}
-      </ol>
-      {% if not audit.phases | selectattr('started_at') | list %}<p class="hint">Per-phase timestamps were not recorded for this run.</p>{% endif %}
-      {% else %}
-      <p class="empty">The run status file is not available, so phase records cannot be shown.</p>
-      {% endif %}
     </div>
+  </div>
+
+  <div class="card">
+    <h3 id="phases">Analysis phases</h3>
+    {% if audit.status_available %}
+    <ol class="phase-list">
+      {% for phase in audit.phases %}
+      <li class="{{ 'is-done' if phase.recorded else 'is-missing' }}">
+        <span class="phase-mark" aria-hidden="true"></span>
+        <div>
+          <p class="phase-name">{{ phase.label }} <span class="hint">{% if phase.started_at %}{{ phase.started_at[11:19] }} UTC{% elif phase.recorded %}Recorded{% else %}Not recorded{% endif %}</span></p>
+          {% if phase.summary %}<p class="hint">{{ phase.summary }}</p>{% endif %}
+          {% if phase.lines %}
+          <details class="disclosure"{% if print_mode %} open{% endif %}>
+            <summary>{{ phase.lines | length }} detail line{{ 's' if phase.lines | length != 1 }}</summary>
+            <ul class="phase-lines">
+              {% for line in phase.lines %}
+              <li>
+                {%- if line.finding_id or line.severity or line.environment or line.category %}
+                <span class="phase-tags">
+                  {%- if line.finding_id %}{% if line.linked and not print_mode %}<a class="phase-ref" href="{{ ui.finding_href(view, line.finding_id) }}" data-open-finding="{{ line.finding_id }}">{{ line.finding_id }}</a>{% else %}<code class="phase-ref">{{ line.finding_id }}</code>{% endif %}{% endif %}
+                  {%- if line.severity %}{{ ui.sev(line.severity, line.severity | capitalize) }}{% endif %}
+                  {%- if line.category %}<span class="tag">{{ line.category }}</span>{% endif %}
+                  {%- if line.environment %}<span class="env-tag">{{ line.environment }}</span>{% endif %}
+                </span>
+                {%- endif %}
+                <span class="phase-text">{{ line.text }}</span>
+              </li>
+              {% endfor %}
+            </ul>
+          </details>
+          {% endif %}
+        </div>
+      </li>
+      {% endfor %}
+    </ol>
+    {% if not audit.phases | selectattr('started_at') | list %}<p class="hint">Per-phase timestamps were not recorded for this run.</p>{% endif %}
+    {% else %}
+    <p class="empty">The run status file is not available, so phase records cannot be shown.</p>
+    {% endif %}
   </div>
 
   {% set h = view.history %}
@@ -102,7 +119,7 @@
     <p>{% for item in cmp.blockers_new %}{{ ui.tag('New blocker', 'danger') }} {{ item }} {% endfor %}{% for item in cmp.blockers_resolved %}{{ ui.tag('Resolved blocker', 'success') }} {{ item }} {% endfor %}</p>
     {% endif %}
     {% if cmp.hash_changes %}
-    <details class="disclosure dev-only"{% if print_mode %} open{% endif %}>
+    <details class="disclosure"{% if print_mode %} open{% endif %}>
       <summary>Checksum changes ({{ cmp.hash_changes | length }})</summary>
       <ul class="plain-list">{% for item in cmp.hash_changes %}<li>{{ view.environment_labels.get(item.environment, item.environment) }} {{ item.object }}: {{ ui.short_hash(item.before) }} → {{ ui.short_hash(item.after) }}</li>{% endfor %}</ul>
     </details>
@@ -112,7 +129,7 @@
     {% endif %}
   </div>
 
-  <div class="card dev-only">
+  <div class="card">
     <h3>Object versions</h3>
     <p class="hint">SHA-256 of the captured source in each environment.</p>
     <div class="table-scroll">
@@ -136,6 +153,14 @@
 
   <div class="card">
     <div class="card-head"><h3>AI investigator tool calls</h3>{{ ui.kind('ai') }}</div>
+    {% if audit.agentic %}
+    <p class="hint">In this run the investigator chose the order of the read-only dictionary reads below. The deterministic checks scored those reads and chose the recommendation.{% if view.ai_leads %} The source-line, synonym, and object checks at the end answered the blind-spot questions after scoring; they did not feed the checks.{% endif %}</p>
+    {% if audit.agent_summary %}
+    <h4>Investigator's closing note</h4>
+    <p>{{ audit.agent_summary }}</p>
+    <p class="hint">The investigator's own words. This note is not a finding and does not change the recommendation.</p>
+    {% endif %}
+    {% endif %}
     {% if not view.ai.used %}
     <p class="empty">The AI investigator did not run, so it made no tool calls.</p>
     {% elif audit.tools %}

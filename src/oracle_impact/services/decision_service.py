@@ -20,17 +20,12 @@ from oracle_impact.services.history import (
     superseded_by,
 )
 from oracle_impact.services.readiness import RECOMMENDED, evaluate_readiness, policy_for
-from oracle_impact.infrastructure.storage.review_store import (
-    APPROVAL_DECISIONS,
-    REVIEW_DECISIONS,
-    VALIDATION_STATUSES,
-)
+from oracle_impact.infrastructure.storage.review_store import APPROVAL_DECISIONS
 
 logger = logging.getLogger(__name__)
 MAX_TEXT = 2000
 MAX_SHORT = 200
-ENVIRONMENTS = ("test", "autumn", "production")
-BASELINE_ENVIRONMENTS = ("production", "autumn")
+BASELINE_ENVIRONMENTS = ("production",)
 
 
 class ActionError(ValueError):
@@ -86,8 +81,8 @@ class DecisionService:
         readiness = evaluate_readiness(
             report,
             policy,
-            review["validations"],
-            review["reviews"],
+            [],
+            [],
             classification["drift_objects"],
             newer,
             stale,
@@ -121,52 +116,6 @@ class DecisionService:
                 event for event in self.registry.events() if event.get("detail", {}).get("source_run") == report.run_id
             ],
         }
-
-    def record_validation(self, report: Report, form: dict, who: dict) -> dict:
-        finding_id = str(form.get("finding_id") or "")
-        if finding_id not in {finding.id for finding in report.findings}:
-            raise ActionError("unknown_finding")
-        status = str(form.get("status") or "")
-        if status not in VALIDATION_STATUSES:
-            raise ActionError("invalid_status")
-        environment = str(form.get("environment") or "")
-        if environment not in ENVIRONMENTS:
-            raise ActionError("invalid_environment")
-        test_case = _text(form.get("test_case"), MAX_SHORT)
-        if not test_case:
-            raise ActionError("test_case_required")
-        evidence = _text(form.get("evidence"))
-        if status in {"passed", "failed"} and not evidence:
-            raise ActionError("evidence_required")
-        record = {
-            "finding_id": finding_id,
-            "test_case": test_case,
-            "environment": environment,
-            "status": status,
-            "evidence": evidence,
-            "notes": _text(form.get("notes")),
-            "assigned_reviewer": _text(form.get("assigned_reviewer"), MAX_SHORT),
-            "executed_at": _text(form.get("executed_at"), 40),
-        }
-        record_id = str(form.get("record_id") or "")
-        if record_id:
-            known = {item["id"] for item in self.reviews.read(report.run_id)["validations"]}
-            if record_id not in known:
-                raise ActionError("unknown_record")
-            record["id"] = record_id
-        return self.reviews.save_validation(report.run_id, record, who)
-
-    def record_review(self, report: Report, form: dict, who: dict) -> dict:
-        finding_id = str(form.get("finding_id") or "")
-        if finding_id not in {finding.id for finding in report.findings}:
-            raise ActionError("unknown_finding")
-        decision = str(form.get("decision") or "")
-        if decision not in REVIEW_DECISIONS:
-            raise ActionError("invalid_decision")
-        reason = _text(form.get("reason"))
-        if decision in {"not_an_issue", "confirmed_issue"} and not reason:
-            raise ActionError("reason_required")
-        return self.reviews.save_review(report.run_id, {"finding_id": finding_id, "decision": decision, "reason": reason}, who)
 
     def record_approval(self, report: Report, form: dict, who: dict) -> dict:
         if not self.settings.approvals_enabled:
@@ -351,8 +300,6 @@ def offline_context(report: Report, max_age_days: int = 30) -> dict:
 
 
 ACTION_MESSAGES = {
-    "validation_saved": "Validation result saved.",
-    "review_saved": "Reviewer decision saved.",
     "approval_saved": "Deployment decision recorded.",
     "baseline_saved": "Trusted baseline recorded.",
     "baseline_cleared": "Trusted baseline cleared.",
@@ -361,16 +308,12 @@ ACTION_MESSAGES = {
     "mapping_saved": "Business mapping saved.",
     "mapping_retired": "Business mapping retired.",
     "form_expired": "The form expired. Submit it again.",
-    "unknown_finding": "That finding is not part of this report.",
     "unknown_record": "That record was not found.",
     "unknown_object": "That object is not in this report, or its checksum could not be used.",
-    "invalid_status": "Choose a validation status.",
     "invalid_environment": "Choose an environment.",
     "invalid_decision": "Choose a decision.",
     "invalid_object": "Enter one object as OWNER.NAME.",
     "invalid_criticality": "Choose a criticality.",
-    "test_case_required": "Enter the test case.",
-    "evidence_required": "Passed and failed results need evidence: a log, ticket, or result reference.",
     "reason_required": "Enter a reason.",
     "change_ref_required": "Enter the change reference, for example the ticket number.",
     "mapping_fields_required": "Enter the application and the business process.",

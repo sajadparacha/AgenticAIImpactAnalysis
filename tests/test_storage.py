@@ -8,7 +8,6 @@ from oracle_impact.infrastructure.storage.registry import Registry
 from oracle_impact.infrastructure.storage.review_store import ReviewStore, empty_review
 from oracle_impact.infrastructure.storage.run_store import RunStore
 
-ANALYST = {"role": "analyst", "name": "Sam", "declared": True}
 APPROVER = {"role": "approver", "name": "Alex", "declared": True}
 
 
@@ -81,7 +80,7 @@ def test_registry_supersedes_baselines_and_keeps_cleared_entries(tmp_path):
     key = {"environment": "production", "owner": "APP", "name": "PKG", "object_type": "PACKAGE BODY"}
     first = registry.set_baseline({**key, "sha256": "a"}, APPROVER)
     second = registry.set_baseline({**key, "sha256": "b"}, APPROVER)
-    other = registry.set_baseline({**key, "environment": "autumn", "sha256": "c"}, APPROVER)
+    other = registry.set_baseline({**key, "name": "OTHER", "sha256": "c"}, APPROVER)
     states = {item["id"]: item["status"] for item in registry.baselines()}
     assert states == {first["id"]: "superseded", second["id"]: "active", other["id"]: "active"}
     assert registry.clear_baseline(second["id"], APPROVER, "Wrong release") is True
@@ -120,32 +119,16 @@ def test_registry_files_are_versioned_json_and_names_are_restricted(tmp_path):
     assert Registry(tmp_path / "missing").baselines() == []
 
 
-def test_review_store_updates_validations_in_place_with_history(tmp_path):
+def test_review_store_appends_approvals(tmp_path):
     store = RunStore(tmp_path)
     store.create("run-1", ["APP.PKG"])
     reviews = ReviewStore(store)
     assert reviews.read("run-1") == empty_review()
-    created = reviews.save_validation("run-1", {"finding_id": "F-1", "status": "not_executed", "test_case": "Case"}, ANALYST)
-    updated = reviews.save_validation("run-1", {"id": created["id"], "finding_id": "F-1", "status": "passed", "test_case": "Case"}, APPROVER)
-    payload = reviews.read("run-1")
-    assert len(payload["validations"]) == 1
-    assert updated["status"] == "passed" and updated["created_by"] == ANALYST and updated["updated_by"] == APPROVER
-    update_event = payload["events"][-1]
-    assert update_event["action"] == "validation.update"
-    assert update_event["detail"]["before"]["status"] == "not_executed" and update_event["detail"]["after"]["status"] == "passed"
-
-
-def test_review_store_appends_reviews_and_approvals(tmp_path):
-    store = RunStore(tmp_path)
-    store.create("run-1", ["APP.PKG"])
-    reviews = ReviewStore(store)
-    reviews.save_review("run-1", {"finding_id": "F-1", "decision": "accepted", "reason": ""}, ANALYST)
-    reviews.save_review("run-1", {"finding_id": "F-1", "decision": "confirmed_issue", "reason": "Reproduced"}, ANALYST)
     reviews.save_approval("run-1", {"decision": "on_hold", "notes": "Wait"}, APPROVER)
     payload = reviews.read("run-1")
-    assert [item["decision"] for item in payload["reviews"]] == ["accepted", "confirmed_issue"]
+    assert payload["validations"] == [] and payload["reviews"] == []
     assert payload["approvals"][0]["actor"] == APPROVER
-    assert [event["action"] for event in payload["events"]] == ["review.record", "review.record", "approval.record"]
+    assert [event["action"] for event in payload["events"]] == ["approval.record"]
 
 
 def test_review_store_fills_missing_sections_of_older_files(tmp_path):

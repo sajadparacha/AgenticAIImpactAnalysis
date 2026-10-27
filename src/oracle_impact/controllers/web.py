@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from oracle_impact.analysis.identifiers import IdentifierError, parse_package_list
+from oracle_impact.analysis.action_scripts import apply_action_scripts
 from oracle_impact.analysis.test_snippets import apply_test_snippets
 from oracle_impact.infrastructure.llm.plain_text import (
     ai_sources,
@@ -29,10 +30,11 @@ from oracle_impact.security import (
     session_valid,
     token_matches,
 )
-from oracle_impact.services.analysis_service import UnknownModel
+from oracle_impact.services.analysis_service import AGENTIC, AgenticUnavailable, UnknownModel
 from oracle_impact.services.business_impact import CRITICALITIES
 from oracle_impact.services.decision_service import ACTION_MESSAGES, ERROR_CODES, ActionError, actor
-from oracle_impact.services.report_view import active_comparison, build_report_view, initial_state
+from oracle_impact.services.email_view import AUDIENCES, DEVELOPER, build_email, build_eml, recipients
+from oracle_impact.services.report_view import build_report_view, initial_state
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 TEMPLATES = Jinja2Templates(directory=str(PACKAGE_ROOT / "views" / "templates"))
@@ -44,7 +46,6 @@ TEMPLATES.env.globals["issue_list"] = issue_list
 TEMPLATES.env.globals["ai_sources"] = ai_sources
 TEMPLATES.env.globals["build_report_view"] = build_report_view
 TEMPLATES.env.globals["initial_state"] = initial_state
-TEMPLATES.env.globals["active_comparison"] = active_comparison
 SESSION_COOKIE = "oia_session"
 _TABS_AFTER = {"validation", "objects", "findings", "overview"}
 
@@ -148,11 +149,43 @@ def install_routes(app: FastAPI) -> None:
         background_tasks.add_task(request.app.state.background, run_id)
         return RedirectResponse(f"/analyses/{run_id}", status_code=303)
 
+    @app.get("/agentic", response_class=HTMLResponse)
+    def agentic_page(request: Request, error: str = ""):
+        return TEMPLATES.TemplateResponse(request, "agentic.html", _agentic_context(request, error, ""))
+
+    @app.post("/agentic/analyses")
+    def start_agentic_analysis(
+        request: Request,
+        background_tasks: BackgroundTasks,
+        packages: str = Form(""),
+        model: str = Form(""),
+        csrf_token_value: str = Form(""),
+    ):
+        settings = request.app.state.settings
+        session = request.cookies.get(SESSION_COOKIE)
+        if not csrf_valid(settings.secret_key, session, csrf_token_value):
+            return RedirectResponse("/agentic?error=The+form+expired.+Submit+it+again.", status_code=303)
+        model = model.strip()
+        try:
+            parsed = parse_package_list(packages)
+            run_id = request.app.state.service.create_run(parsed, model, mode=AGENTIC)
+        except (IdentifierError, UnknownModel, AgenticUnavailable) as exc:
+            return TEMPLATES.TemplateResponse(
+                request,
+                "agentic.html",
+                _agentic_context(request, str(exc), packages, model),
+                status_code=400,
+            )
+        background_tasks.add_task(request.app.state.background, run_id)
+        return RedirectResponse(f"/analyses/{run_id}", status_code=303)
+
     @app.get("/analyses/{run_id}", response_class=HTMLResponse)
     def analysis_status(request: Request, run_id: str):
         payload = _load_status(request, run_id)
         if payload is None:
             return TEMPLATES.TemplateResponse(request, "missing.html", {"run_id": run_id}, status_code=404)
+        if payload["status"].get("status") == "completed" and payload["report"] is not None:
+            return RedirectResponse(f"/analyses/{run_id}/report", status_code=303)
         return TEMPLATES.TemplateResponse(request, "analysis.html", payload)
 
     @app.get("/analyses/{run_id}/status")
@@ -199,14 +232,6 @@ def install_routes(app: FastAPI) -> None:
                 "approval": context["approval"],
             }
         )
-
-    @app.post("/analyses/{run_id}/validations")
-    async def record_validation(request: Request, run_id: str):
-        return await _act(request, run_id, "validation", "validation_saved", lambda svc, report, form, who: svc.record_validation(report, form, who))
-
-    @app.post("/analyses/{run_id}/reviews")
-    async def record_review(request: Request, run_id: str):
-        return await _act(request, run_id, "validation", "review_saved", lambda svc, report, form, who: svc.record_review(report, form, who))
 
     @app.post("/analyses/{run_id}/approval")
     async def record_approval(request: Request, run_id: str):
@@ -269,6 +294,34 @@ def install_routes(app: FastAPI) -> None:
             {"report": report, "finding": finding},
         )
 
+    @app.get("/analyses/{run_id}/email", response_class=HTMLResponse)
+    def email_preview(request: Request, run_id: str, audience: str = DEVELOPER):
+        email = _email(request, run_id, audience)
+        if email is None:
+            return TEMPLATES.TemplateResponse(request, "missing.html", {"run_id": run_id}, status_code=404)
+        return TEMPLATES.TemplateResponse(
+            request,
+            "email.html",
+            {
+                "email": email,
+                "run_id": run_id,
+                "mode": (_read(request, run_id, "request.json") or {}).get("mode") or "deterministic",
+                "audiences": AUDIENCES,
+                "public_url_set": bool(request.app.state.settings.public_base_url),
+            },
+        )
+
+    @app.get("/analyses/{run_id}/email.eml")
+    def email_draft(request: Request, run_id: str, audience: str = DEVELOPER):
+        email = _email(request, run_id, audience)
+        if email is None:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return Response(
+            build_eml(email),
+            media_type="message/rfc822",
+            headers={"Content-Disposition": f'attachment; filename="impact-{run_id}-{email["audience"]}.eml"'},
+        )
+
     @app.get("/analyses/{run_id}/export")
     def export_report(request: Request, run_id: str, format: str = "json"):
         report = _with_snippets(request, run_id)
@@ -308,12 +361,17 @@ def _dashboard_context(request: Request, error: str, packages: str, model: str =
         "runs": request.app.state.store.list_runs(),
         "csrf_token": csrf_token(settings.secret_key, session),
         "error": error,
-        "fixture_packages": ["DEMO.PKG_STATUS", "DEMO.PKG_BILLING"] if settings.fixture_mode else [],
+        "fixture_packages": ["DEMO.PKG_STATUS", "DEMO.PKG_BILLING", "DEMO.PKG_DISPATCH"] if settings.fixture_mode else [],
         "submitted_packages": packages,
-        "autumn_label": request.app.state.service.labels().get("autumn", ""),
         "models": models,
         "selected_model": model if model in models else settings.llm_model,
     }
+
+
+def _agentic_context(request: Request, error: str, packages: str, model: str = "") -> dict:
+    context = _dashboard_context(request, error, packages, model)
+    context["agentic_available"] = request.app.state.service.agentic_available()
+    return context
 
 
 def _read(request: Request, run_id: str, name: str):
@@ -328,7 +386,8 @@ def _load_status(request: Request, run_id: str) -> dict | None:
     if status is None:
         return None
     report = _report(request, run_id)
-    return {"status": status, "report": report, "run_id": run_id}
+    mode = (_read(request, run_id, "request.json") or {}).get("mode") or "deterministic"
+    return {"status": status, "report": report, "run_id": run_id, "mode": mode}
 
 
 def _with_snippets(request: Request, run_id: str) -> Report | None:
@@ -336,8 +395,10 @@ def _with_snippets(request: Request, run_id: str) -> Report | None:
     if report is None:
         return None
     payload = _read(request, run_id, "snapshot.json")
-    if payload is not None:
-        apply_test_snippets(report.findings, Snapshot.model_validate(payload))
+    snapshot = Snapshot.model_validate(payload) if payload is not None else None
+    if snapshot is not None:
+        apply_test_snippets(report.findings, snapshot)
+    apply_action_scripts(report.findings, report.dependency_edges, snapshot)
     return report
 
 
@@ -346,6 +407,22 @@ def _report(request: Request, run_id: str) -> Report | None:
     if payload is None:
         return None
     return Report.model_validate(payload)
+
+
+def _email(request: Request, run_id: str, audience: str) -> dict | None:
+    report = _report(request, run_id)
+    if report is None:
+        return None
+    settings = request.app.state.settings
+    audience = audience if audience in AUDIENCES else DEVELOPER
+    base = settings.public_base_url or str(request.base_url).rstrip("/")
+    return build_email(
+        report,
+        request.app.state.decisions.context(report)["readiness"],
+        audience,
+        to=recipients(settings.email_developers if audience == DEVELOPER else settings.email_support),
+        report_url=f"{base}/analyses/{report.run_id}/report",
+    )
 
 
 def _report_context(request: Request, run_id: str, report: Report, interactive: bool = False) -> dict:

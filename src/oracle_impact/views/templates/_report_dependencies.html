@@ -102,7 +102,7 @@
           <th scope="col">Relationship</th>
           <th scope="col">Impact</th>
           <th scope="col">Linked findings</th>
-          <th scope="col" class="dev-only">Source</th>
+          <th scope="col">Source</th>
           <th scope="col">Business impact</th>
         </tr>
       </thead>
@@ -115,7 +115,7 @@
           <td>
             {% for item in dep.findings %}<a href="{{ ui.finding_href(view, item.id) }}" data-open-finding="{{ item.id }}" class="chip-link">{{ ui.sev(item.level, item.level_label) }} {{ item.id }}</a> {% else %}<span class="hint">None</span>{% endfor %}
           </td>
-          <td class="dev-only">{{ dep.database | capitalize }} dictionary<span class="row-meta">depth {{ dep.depth }}</span></td>
+          <td>{{ dep.database | capitalize }} dictionary<span class="row-meta">depth {{ dep.depth }}</span></td>
           <td>{% set mapped = view.business.rows | selectattr('qualified', 'equalto', dep.qualified) | list %}{% if mapped %}{% for row in mapped %}{{ ui.tag(row.label, row.tone) }} <span class="row-meta">{{ row.mapping.business_process }}</span>{% endfor %}{% else %}<span class="hint">Not established</span>{% endif %}</td>
         </tr>
         {% endfor %}

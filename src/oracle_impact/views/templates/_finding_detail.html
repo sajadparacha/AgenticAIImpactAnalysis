@@ -1,12 +1,11 @@
 {% import "_report_macros.html" as ui %}
 {% set f = row.finding %}
-{% set interactive = view.session.interactive and not print_mode %}
 <article class="detail" id="detail-{{ row.id }}" data-detail="{{ row.id }}" aria-labelledby="detail-{{ row.id }}-title"{% if not print_mode and state.finding != row.id %} hidden{% endif %}>
   <header class="detail-head">
-    <p class="chips">{{ ui.sev(row.level, row.level_label) }} {{ ui.source(row.source, row.source_label) }} {{ ui.tag(row.evidence_class_label, 'success' if row.evidence_class == 'test_validated' else 'neutral') }}{% if row.driver %} <span class="driver">{{ row.driver_label }}</span>{% endif %}</p>
+    <p class="chips">{{ ui.sev(row.level, row.level_label) }} {{ ui.source(row.source, row.source_label) }} {{ ui.tag(row.evidence_class_label, 'neutral') }}{% if row.driver %} <span class="driver">{{ row.driver_label }}</span>{% endif %}</p>
     <h3 id="detail-{{ row.id }}-title" tabindex="-1">{{ row.headline }}</h3>
     <p class="row-meta">{{ row.id }} · {{ row.category_label }} · {% if row.object %}<code>{{ row.object }}</code> ({{ row.object_type | lower }}){% else %}Object not identified{% endif %}</p>
-    <dl class="kv kv-tight dev-only">
+    <dl class="kv kv-tight">
       {% if row.rule_id %}<div><dt>Rule</dt><dd><code>{{ row.rule_id }}</code></dd></div>{% endif %}
       {% if row.fingerprint %}<div><dt>Fingerprint</dt><dd><code>{{ row.fingerprint }}</code> <span class="hint">stable across runs</span></dd></div>{% endif %}
       <div><dt>Run</dt><dd><code>{{ view.run_id }}</code></dd></div>
@@ -35,18 +34,18 @@
       <div><dt>Confidence</dt><dd>{{ row.confidence | capitalize }} <span class="hint">(qualitative)</span></dd></div>
       <div><dt>Captured from</dt><dd>{{ row.environment_label }}</dd></div>
       {% if f.changed_lines_test %}
-      <div class="dev-only"><dt>Lines in Test</dt><dd>
+      <div><dt>Lines in Test</dt><dd>
         {% for line in f.changed_lines_test %}{% if row.diff_link %}<a href="{{ view.base_url }}?tab=source&amp;object={{ row.diff_link.key | urlencode }}&amp;line={{ line }}&amp;side=t" data-goto-line="{{ row.diff_link.key }}|t|{{ line }}">{{ line }}</a>{% else %}{{ line }}{% endif %}{{ ', ' if not loop.last }}{% endfor %}
       </dd></div>
       {% endif %}
       {% if f.corresponding_lines_prod %}
-      <div class="dev-only"><dt>Lines in Production</dt><dd>
+      <div><dt>Lines in Production</dt><dd>
         {% for line in f.corresponding_lines_prod %}{% if row.diff_link %}<a href="{{ view.base_url }}?tab=source&amp;object={{ row.diff_link.key | urlencode }}&amp;line={{ line }}&amp;side=p" data-goto-line="{{ row.diff_link.key }}|p|{{ line }}">{{ line }}</a>{% else %}{{ line }}{% endif %}{{ ', ' if not loop.last }}{% endfor %}
       </dd></div>
       {% endif %}
       {% if row.affected_object %}<div><dt>Affected object</dt><dd><code>{{ row.affected_object }}</code></dd></div>{% endif %}
       {% if f.dependency_path %}<div class="kv-wide"><dt>Call path</dt><dd>{% for step in f.dependency_path %}<code>{{ step }}</code>{{ ' · ' if not loop.last }}{% endfor %}</dd></div>{% endif %}
-      {% if f.version_hash %}<div class="kv-wide dev-only"><dt>Version hash</dt><dd><code class="hash">{{ f.version_hash }}</code></dd></div>{% endif %}
+      {% if f.version_hash %}<div class="kv-wide"><dt>Version hash</dt><dd><code class="hash">{{ f.version_hash }}</code></dd></div>{% endif %}
     </dl>
     {% endif %}
     <ul class="link-list">
@@ -116,6 +115,12 @@
     {% if row.recommended_action %}
     <p><span class="attrib">Analyzer rule</span> {{ row.recommended_action }}</p>
     {% endif %}
+    {% if row.action_scripts %}
+    <details class="disclosure action-scripts"{% if print_mode %} open{% endif %}>
+      <summary>Script{{ 's' if row.action_scripts | length != 1 }} for this action ({{ row.action_scripts | length }})</summary>
+      {% with scripts = row.action_scripts %}{% include "_action_scripts.html" %}{% endwith %}
+    </details>
+    {% endif %}
     {% if row.proposed_tests or row.ai_todo %}
     <ul class="step-list-plain">
       {% for test in row.proposed_tests %}<li><span class="attrib">Analyzer rule</span> {{ test }}</li>{% endfor %}
@@ -123,74 +128,12 @@
     </ul>
     {% endif %}
     {% if not row.recommended_action and not row.proposed_tests and not row.ai_todo %}<p class="hint">No investigation steps were recorded.</p>{% endif %}
+    {% if row.source != 'ai' %}<p class="hint">Static evidence: {{ row.evidence_label | lower }}. Test results are not recorded in this report.</p>{% endif %}
     <ul class="link-list">
       {% if row.snippets %}
       <li><a href="/analyses/{{ view.run_id }}/findings/{{ row.id }}">{{ row.snippets }} SQL test script{{ 's' if row.snippets != 1 }} to run in Test</a></li>
       {% endif %}
       <li><a href="/analyses/{{ view.run_id }}/findings/{{ row.id }}">Open the full finding page</a></li>
     </ul>
-  </div>
-
-  <div class="block block-verify">
-    <h4><span class="block-no">7</span> Validation and review status</h4>
-    {% if row.validations %}
-    <ul class="record-list">
-      {% for record in row.validations %}
-      <li>
-        <strong>{{ view.review.validation_statuses.get(record.status, record.status) }}</strong> · {{ record.test_case }} · {{ view.environment_labels.get(record.environment, record.environment) }}
-        <span class="row-meta">{{ record.evidence or 'No evidence reference' }}{% if record.assigned_reviewer %} · reviewer {{ record.assigned_reviewer }}{% endif %} · updated {{ record.updated_at[:16] | replace('T', ' ') }} UTC by {{ record.updated_by.name }} (self-declared)</span>
-      </li>
-      {% endfor %}
-    </ul>
-    {% else %}
-    <p><strong>Validation not recorded.</strong> No test result has been recorded for this finding.</p>
-    {% endif %}
-    {% if row.reviews %}
-    <ul class="record-list">
-      {% for record in row.reviews %}
-      <li><strong>{{ view.review.review_decisions.get(record.decision, record.decision) }}</strong>{% if record.reason %}: {{ record.reason }}{% endif %}<span class="row-meta">{{ record.at[:16] | replace('T', ' ') }} UTC by {{ record.actor.name }} (self-declared, {{ record.actor.role }})</span></li>
-      {% endfor %}
-    </ul>
-    {% else %}
-    <p class="hint">No reviewer decision recorded.</p>
-    {% endif %}
-    {% if row.source != 'ai' %}<p class="hint">Static evidence: {{ row.evidence_label | lower }}.</p>{% endif %}
-
-    {% if interactive and row.source != 'ai' %}
-    <details class="disclosure record-form">
-      <summary>Record a validation result</summary>
-      <form method="post" action="/analyses/{{ view.run_id }}/validations" class="stack-form">
-        {{ ui.form_head(view, 'findings') }}
-        <input type="hidden" name="finding_id" value="{{ row.id }}">
-        <label class="field"><span>Test case</span><input name="test_case" maxlength="200" required></label>
-        <label class="field"><span>Environment</span>
-          <select name="environment">{% for env, label in view.environment_labels.items() %}<option value="{{ env }}">{{ label }}</option>{% endfor %}</select>
-        </label>
-        <label class="field"><span>Result</span>
-          <select name="status">{% for key, label in view.review.validation_statuses.items() if key != 'none' %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select>
-        </label>
-        <label class="field"><span>Evidence <small>(log, ticket, or result reference; required for passed or failed)</small></span><textarea name="evidence" rows="2" maxlength="2000"></textarea></label>
-        <label class="field"><span>Assigned reviewer</span><input name="assigned_reviewer" maxlength="200"></label>
-        <label class="field"><span>Executed at <small>(as recorded by the tester)</small></span><input name="executed_at" maxlength="40" placeholder="2026-10-24 14:00"></label>
-        <label class="field"><span>Notes</span><textarea name="notes" rows="2" maxlength="2000"></textarea></label>
-        {{ ui.actor_field('val-' ~ row.id) }}
-        <button type="submit" class="btn">Save validation result</button>
-      </form>
-    </details>
-    <details class="disclosure record-form">
-      <summary>Record a reviewer decision</summary>
-      <form method="post" action="/analyses/{{ view.run_id }}/reviews" class="stack-form">
-        {{ ui.form_head(view, 'findings') }}
-        <input type="hidden" name="finding_id" value="{{ row.id }}">
-        <label class="field"><span>Decision</span>
-          <select name="decision">{% for key, label in view.review.review_decisions.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select>
-        </label>
-        <label class="field"><span>Reason <small>(required for Not an issue and Confirmed issue)</small></span><textarea name="reason" rows="2" maxlength="2000"></textarea></label>
-        {{ ui.actor_field('rev-' ~ row.id) }}
-        <button type="submit" class="btn">Save reviewer decision</button>
-      </form>
-      <p class="hint">A reviewer decision cannot clear a finding whose rule requires a fix and a new analysis.</p>
-    </details>
-    {% endif %}
   </div>
 </article>

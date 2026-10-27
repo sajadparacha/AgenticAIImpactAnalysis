@@ -7,7 +7,7 @@ from fastapi import FastAPI
 
 from oracle_impact.config import Settings
 from oracle_impact.controllers.web import install_routes
-from oracle_impact.fixtures.demo_catalog import build_autumn_catalog, build_demo_catalogs
+from oracle_impact.fixtures.demo_catalog import build_demo_catalogs
 from oracle_impact.infrastructure.llm.investigator import Investigator
 from oracle_impact.infrastructure.llm.openai_compatible import OpenAICompatibleProvider
 from oracle_impact.infrastructure.oracle.gateway import FixtureGateway, UnconfiguredGateway
@@ -28,7 +28,6 @@ def create_app(
     production_gateway=None,
     investigator=None,
     background: Callable[[str], None] | None = None,
-    autumn_gateway=None,
 ) -> FastAPI:
     settings = settings or Settings()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
@@ -40,8 +39,6 @@ def create_app(
     registry = Registry(settings.registry_dir)
     if test_gateway is None or production_gateway is None:
         test_gateway, production_gateway = build_gateways(settings)
-        if autumn_gateway is None:
-            autumn_gateway = build_autumn_gateway(settings)
     if investigator is None and settings.llm_egress_enabled:
         investigator = Investigator(
             provider=OpenAICompatibleProvider(
@@ -56,6 +53,8 @@ def create_app(
             timeout_seconds=settings.analysis_timeout_seconds,
             token_budget=settings.llm_token_budget,
             max_depth=settings.max_dependency_depth,
+            gather_token_budget=settings.agentic_token_budget,
+            gather_max_calls_per_run=settings.agentic_max_tool_calls_per_run,
         )
     service = AnalysisService(
         settings,
@@ -63,7 +62,6 @@ def create_app(
         test_gateway,
         production_gateway,
         investigator,
-        autumn_gateway=autumn_gateway,
         registry=registry,
         rules=load_rules(settings.policy_file),
     )
@@ -107,24 +105,6 @@ def build_gateways(settings: Settings):
         settings.prod_oracle_edition,
     )
     return test_gateway, prod_gateway
-
-
-def build_autumn_gateway(settings: Settings):
-    """AUTUMN is optional. Without a configured connection the report compares Test and Production only."""
-    if settings.fixture_mode:
-        if not settings.fixture_autumn:
-            return None
-        return FixtureGateway("autumn", "fixture-autumn", settings.autumn_oracle_label, build_autumn_catalog())
-    if not settings.autumn_oracle_configured:
-        return None
-    return OracledbGateway(
-        "autumn",
-        settings.autumn_oracle_label,
-        settings.autumn_oracle_dsn,
-        settings.autumn_oracle_user,
-        settings.autumn_oracle_password,
-        settings.autumn_oracle_edition,
-    )
 
 
 def _live_or_unconfigured(environment: str, label: str, dsn: str, user: str, password: str, edition: str = ""):

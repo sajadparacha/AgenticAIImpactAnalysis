@@ -55,9 +55,7 @@ def _collect_environment(summary, environment, status_reader, error_reader, pack
                 summary.objects.append(
                     CompiledObject(environment=environment, owner=owner, name=name, object_type=object_type, status=status, last_ddl_time=last_ddl)
                 )
-        errors = error_reader(owner, name)
-        if not errors.inaccessible:
-            summary.errors.extend(_errors(environment, owner, name, errors.errors))
+        _record_errors(summary, environment, owner, name, error_reader(owner, name))
     selected = set(packages)
     for owner, name in dependents[:MAX_DEPENDENTS]:
         if (owner, name) in selected:
@@ -81,10 +79,22 @@ def _collect_environment(summary, environment, status_reader, error_reader, pack
                 )
                 invalid = invalid or status != "VALID"
         if invalid:
-            errors = error_reader(owner, name)
-            if not errors.inaccessible:
-                summary.errors.extend(_errors(environment, owner, name, errors.errors))
+            _record_errors(summary, environment, owner, name, error_reader(owner, name))
     return True
+
+
+def _record_errors(summary, environment, owner, name, fetched) -> None:
+    if fetched.inaccessible:
+        summary.unread_errors[f"{environment}:{owner}.{name}"] = (
+            "ALL_ERRORS was not read in this run" if getattr(fetched, "not_read", False) else "ALL_ERRORS could not be read"
+        )
+        return
+    summary.errors.extend(_errors(environment, owner, name, fetched.errors))
+
+
+def missing_errors_text(summary: CompilationSummary, environment: str, owner: str, name: str) -> str:
+    """Why an invalid object shows no compile errors."""
+    return summary.unread_errors.get(f"{environment}:{owner}.{name}", "no ALL_ERRORS rows were visible")
 
 
 def _errors(environment, owner, name, rows) -> list[CompileError]:
@@ -118,7 +128,9 @@ def compilation_findings(run_id: str, summary: CompilationSummary, labels: dict[
             and error.attribute == "ERROR"
         ]
         prod = by_key.get(("production", item.owner, item.name, item.object_type))
-        listed = "; ".join(f"line {error.line}: {error.text}" for error in errors[:5]) or "no ALL_ERRORS rows were visible"
+        listed = "; ".join(f"line {error.line}: {error.text}" for error in errors[:5]) or missing_errors_text(
+            summary, "test", item.owner, item.name
+        )
         qualified = f"{item.owner}.{item.name}"
         if item.role == "in_scope":
             scope, severity = "in_scope", Severity.CRITICAL

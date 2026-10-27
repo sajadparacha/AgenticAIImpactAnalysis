@@ -2,8 +2,6 @@
 
 from pydantic import BaseModel, Field
 
-from oracle_impact.models.report_parts import ObjectDiff
-
 
 class EnvironmentObject(BaseModel):
     """One object as captured in one environment."""
@@ -36,17 +34,6 @@ class ObjectState(BaseModel):
         return next((item for item in self.environments if item.environment == environment), None)
 
 
-class Comparison(BaseModel):
-    """A source-to-target diff set. The Test to Production pair lives in Report.diffs."""
-
-    key: str
-    source_environment: str
-    target_environment: str
-    source_label: str
-    target_label: str
-    diffs: list[ObjectDiff] = Field(default_factory=list)
-
-
 class CompiledObject(BaseModel):
     environment: str
     owner: str
@@ -75,6 +62,8 @@ class CompilationSummary(BaseModel):
     unavailable: list[str] = Field(default_factory=list)
     objects: list[CompiledObject] = Field(default_factory=list)
     errors: list[CompileError] = Field(default_factory=list)
+    unread_errors: dict[str, str] = Field(default_factory=dict)
+    """Why ALL_ERRORS is missing for an object, keyed "environment:OWNER.NAME"."""
 
 
 class CoverageItem(BaseModel):

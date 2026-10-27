@@ -87,8 +87,9 @@ _GROUPS = {
     "error_contract": ("interface", "Interface"),
     "security": ("security", "Security"),
     "compilation": ("compilation", "Compilation"),
+    "dependency": ("dependency", "Dependencies"),
 }
-_GROUP_ORDER = ("compilation", "interface", "business", "data", "transaction", "security", "other")
+_GROUP_ORDER = ("compilation", "dependency", "interface", "business", "data", "transaction", "security", "other")
 
 
 def issue_list(report) -> dict:
@@ -101,7 +102,7 @@ def issue_list(report) -> dict:
     explained: dict[str, object] = {}
     extra = []
     for finding in findings:
-        if getattr(finding, "origin", "") != "investigator":
+        if getattr(finding, "origin", "") != "investigator" or is_blind_spot_lead(finding):
             continue
         anchor = _anchor(finding, report)
         if anchor is None or anchor.id in explained:
@@ -161,7 +162,44 @@ _TOOL_LABELS = {
     "get_dependencies": "Dependencies",
     "get_table_metadata": "Table definition",
     "get_procedure_arguments": "Procedure arguments",
+    "get_arguments": "Procedure arguments",
+    "get_object_status": "Object status",
+    "get_grants": "Grants",
+    "get_compile_errors": "Compile errors",
+    "read_source_lines": "Source lines",
+    "read_synonym": "Synonym target",
+    "check_object": "Object exists",
 }
+
+
+def is_blind_spot_lead(finding) -> bool:
+    return bool((getattr(finding, "attributes", None) or {}).get("blind_spot"))
+
+
+def blind_spot_leads(report) -> list[dict]:
+    """AI answers to the questions the deterministic checks could not resolve. Shown apart from findings."""
+    leads = []
+    for finding in getattr(report, "findings", []) or []:
+        if getattr(finding, "origin", "") != "investigator" or not is_blind_spot_lead(finding):
+            continue
+        attributes = finding.attributes or {}
+        leads.append(
+            {
+                "id": finding.id,
+                "kind": attributes.get("blind_spot"),
+                "kind_label": "Synonym" if attributes.get("blind_spot") == "synonym" else "SQL built while it runs",
+                "subject": str(attributes.get("subject") or finding.changed_object),
+                "reviews": str(attributes.get("review_of") or ""),
+                "targets": list(attributes.get("likely_targets") or []),
+                "checked": list(attributes.get("checked") or []),
+                "explanation": " ".join((finding.explanation or "").split()),
+                "test": (finding.proposed_tests or [""])[0],
+                "unknowns": " ".join(attributes.get("unknowns") or []),
+                "lines": list(finding.changed_lines_test),
+                "citation_unconfirmed": bool(attributes.get("citation_unconfirmed")),
+            }
+        )
+    return leads
 
 
 def ai_sources(report) -> dict:
@@ -170,7 +208,7 @@ def ai_sources(report) -> dict:
     log = list(getattr(report, "tool_log", []) or [])
     for entry in log:
         env, _, name = str(entry.get("target") or "").partition(" ")
-        if env not in {"test", "production"}:
+        if env not in {"test", "production", "all"}:
             env, name = "", f"{env} {name}".strip()
         tool = str(entry.get("tool") or "")
         what = _TOOL_LABELS.get(tool, tool.replace("_", " ").capitalize())
@@ -180,7 +218,9 @@ def ai_sources(report) -> dict:
         )
         if not entry.get("ok", True):
             row["refused"] = True
-        elif env:
+        elif env == "all":
+            row["test"] = row["production"] = True
+        elif env in {"test", "production"}:
             row[env] = True
     ordered = sorted(rows.values(), key=lambda row: (row["refused"], row["object"], row["what"]))
     return {
@@ -219,7 +259,7 @@ def investigator_notes(report) -> dict:
     repeated = []
     unchecked: list[str] = []
     for finding in getattr(report, "findings", []) or []:
-        if getattr(finding, "origin", "") != "investigator":
+        if getattr(finding, "origin", "") != "investigator" or is_blind_spot_lead(finding):
             continue
         lines = review_lines(finding, report)
         if lines["change"] or lines["todo"]:

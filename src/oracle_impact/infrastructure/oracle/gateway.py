@@ -72,10 +72,23 @@ class StatusFetch:
 
 @dataclass
 class ErrorFetch:
-    """ALL_ERRORS rows for one name: (object_type, line, position, text, attribute)."""
+    """ALL_ERRORS rows for one name: (object_type, line, position, text, attribute).
+    not_read is True when an agentic run never made this read, as opposed to a denied read."""
 
     inaccessible: bool = False
     errors: list[tuple[str, int, int, str, str]] = field(default_factory=list)
+    not_read: bool = False
+
+
+@dataclass
+class SynonymFetch:
+    """ALL_SYNONYMS row for one synonym. db_link is set when the target is in another database."""
+
+    inaccessible: bool = False
+    found: bool = False
+    target_owner: str = ""
+    target_name: str = ""
+    db_link: str = ""
 
 
 @dataclass
@@ -125,6 +138,17 @@ class Catalog:
     object_status: dict[tuple[str, str, str], str] = field(default_factory=dict)
     compile_errors: dict[tuple[str, str], list[tuple[str, int, int, str, str]]] = field(default_factory=dict)
     inaccessible_status: set[tuple[str, str]] = field(default_factory=set)
+    objects: set[tuple[str, str, str]] = field(default_factory=set)
+    """Objects without source or table metadata, such as sequences."""
+    synonyms: dict[tuple[str, str], tuple[str, str, str]] = field(default_factory=dict)
+    inaccessible_synonyms: set[tuple[str, str]] = field(default_factory=set)
+
+    def add_object(self, owner: str, name: str, object_type: str) -> None:
+        self.objects.add((owner, name, object_type))
+
+    def add_synonym(self, owner: str, name: str, target_owner: str, target_name: str, db_link: str = "") -> None:
+        self.synonyms[(owner, name)] = (target_owner, target_name, db_link)
+        self.objects.add((owner, name, "SYNONYM"))
 
     def set_status(self, owner: str, name: str, object_type: str, status: str) -> None:
         self.object_status[(owner, name, object_type)] = status
@@ -272,6 +296,10 @@ class FixtureGateway:
             if src_owner == owner and src_name == name:
                 status = self.catalog.object_status.get((owner, name, object_type), "VALID")
                 rows.append((object_type, status, None))
+        table = self.catalog.tables.get((owner, name))
+        if table is not None and table.exists:
+            rows.append(("TABLE", "VALID", None))
+        rows.extend((kind, "VALID", None) for (obj_owner, obj_name, kind) in sorted(self.catalog.objects) if (obj_owner, obj_name) == (owner, name))
         return StatusFetch(objects=rows)
 
     def fetch_compile_errors(self, owner: str, name: str) -> ErrorFetch:
@@ -286,6 +314,14 @@ class FixtureGateway:
         if found is None:
             return TableMetadata(owner=owner, name=table, exists=False)
         return found.model_copy(deep=True)
+
+    def fetch_synonym(self, owner: str, name: str) -> SynonymFetch:
+        if (owner, name) in self.catalog.inaccessible_synonyms:
+            return SynonymFetch(inaccessible=True)
+        target = self.catalog.synonyms.get((owner, name))
+        if target is None:
+            return SynonymFetch()
+        return SynonymFetch(found=True, target_owner=target[0], target_name=target[1], db_link=target[2])
 
 
 class UnconfiguredGateway:
@@ -322,4 +358,7 @@ class UnconfiguredGateway:
         raise OracleNotConfigured(self._message)
 
     def fetch_table(self, owner: str, table: str) -> TableMetadata:
+        raise OracleNotConfigured(self._message)
+
+    def fetch_synonym(self, owner: str, name: str) -> SynonymFetch:
         raise OracleNotConfigured(self._message)

@@ -4,7 +4,7 @@ WeasyPrint is used when its native libraries import successfully. Otherwise
 fpdf2 renders the same sections. Neither path screenshots the dashboard.
 """
 
-from oracle_impact.infrastructure.llm.plain_text import issue_list, plain_reasons, review_lines
+from oracle_impact.infrastructure.llm.plain_text import blind_spot_leads, issue_list, plain_reasons, review_lines
 from oracle_impact.models.enums import Recommendation
 from oracle_impact.models.report import Report
 
@@ -111,6 +111,10 @@ def _render_fpdf(report: Report, view: dict | None = None) -> bytes:
         _write(pdf, f"Evidence: {finding.evidence}", 10, "", 5)
         if finding.dependency_path:
             _write(pdf, "Path: " + " | ".join(finding.dependency_path), 10, "", 5)
+        if finding.origin != "investigator":
+            for script in finding.attributes.get("action_scripts") or []:
+                _write(pdf, "Action script: " + script.get("title", ""), 10, "B", 4)
+                _write(pdf, script.get("sql", ""), 9, "", 4)
         for snippet in finding.attributes.get("test_snippets") or []:
             _write(pdf, snippet.get("title", "Test script"), 10, "B", 4)
             _write(pdf, snippet.get("sql", ""), 9, "", 4)
@@ -124,6 +128,21 @@ def _render_fpdf(report: Report, view: dict | None = None) -> bytes:
                 _write(pdf, "What changes: " + lines["change"], 10, "", 5)
             if lines["todo"]:
                 _write(pdf, "What to do: " + lines["todo"], 10, "", 5)
+            pdf.ln(1)
+    leads = blind_spot_leads(report)
+    if leads:
+        _heading(pdf, "AI leads on what the checks could not see")
+        _write(pdf, "Unverified. These leads do not block or clear deployment.", 10, "I", 5)
+        for lead in leads:
+            _write(pdf, f"{lead['id']}  {lead['kind_label']}: {lead['subject']}", 11, "B", 6)
+            if lead["explanation"]:
+                _write(pdf, lead["explanation"], 10, "", 5)
+            if lead["targets"]:
+                _write(pdf, "Possibly uses: " + ", ".join(lead["targets"]), 10, "", 5)
+            for item in lead["checked"]:
+                _write(pdf, f"Looked up {item['object']} in {item['environment']}: {item['result']}", 10, "", 5)
+            if lead["test"]:
+                _write(pdf, "Suggested test: " + lead["test"], 10, "", 5)
             pdf.ln(1)
     _heading(pdf, "Risk assessment")
     _write(pdf, "Deterministic decision. The AI investigator cannot change this recommendation.", 10, "", 5)

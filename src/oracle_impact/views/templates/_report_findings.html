@@ -26,9 +26,6 @@
     <label class="field"><span>Evidence class</span>
       <select data-filter="ec"><option value="">All</option>{% for item in view.filters.evidence_class %}<option value="{{ item.value }}">{{ item.label }}</option>{% endfor %}</select>
     </label>
-    <label class="field"><span>Validation</span>
-      <select data-filter="val"><option value="">All</option>{% for item in view.filters.validation %}<option value="{{ item.value }}">{{ item.label }}</option>{% endfor %}</select>
-    </label>
     <label class="field"><span>Deployment</span>
       <select data-filter="blk"><option value="">All</option>{% for item in view.filters.blocking %}<option value="{{ item.value }}">{{ item.label }}</option>{% endfor %}</select>
     </label>
@@ -43,12 +40,9 @@
   </div>
   <p class="result-count" data-result-count aria-live="polite">Showing {{ view.rows | length }} of {{ view.rows | length }} findings</p>
   {% endif %}
-  {% if not view.review.validations and not view.review.reviews %}
-  <p class="hint">No validation result or reviewer decision has been recorded for any finding yet.</p>
-  {% endif %}
   <div class="table-scroll">
     <table class="data-table findings-table" data-findings-table>
-      <caption class="sr-only">Findings. Use the Details button to open evidence, AI interpretation, verification status, and next steps.</caption>
+      <caption class="sr-only">Findings. Use the Details button to open evidence, the AI interpretation, and next steps.</caption>
       <thead>
         <tr>
           <th scope="col" aria-sort="ascending"><button type="button" class="sort" data-sort="rank">Severity</button></th>
@@ -57,7 +51,6 @@
           <th scope="col">Source</th>
           <th scope="col"><button type="button" class="sort" data-sort="evidence">Evidence</button></th>
           <th scope="col">Deployment</th>
-          <th scope="col">Validation</th>
           <th scope="col"><span class="sr-only">Details</span></th>
         </tr>
       </thead>
@@ -66,7 +59,7 @@
         <tr id="{{ row.dom_id }}" class="frow lvl-{{ row.level }}" data-row data-id="{{ row.id }}" data-rank="{{ loop.index0 }}"
             data-sev="{{ row.level }}" data-type="{{ row.object_type }}" data-cat="{{ row.category }}" data-src="{{ row.source }}"
             data-ev="{{ row.evidence_status }}" data-drivers="{{ '1' if row.driver else '' }}" data-object="{{ row.object }}" data-search="{{ row.search }}"
-            data-ec="{{ row.evidence_class }}" data-val="{{ row.validation_state }}" data-blk="{{ row.blocking or 'none' }}" data-env="{{ row.environment }}" data-chg="{{ row.change_type }}">
+            data-ec="{{ row.evidence_class }}" data-blk="{{ row.blocking or 'none' }}" data-env="{{ row.environment }}" data-chg="{{ row.change_type }}">
           <td>{{ ui.sev(row.level, row.level_label) }}</td>
           <td>
             <span class="row-title">{{ row.headline }}</span>
@@ -77,13 +70,12 @@
           </td>
           <td>
             {% if row.object %}<code class="obj">{{ row.object }}</code>{% else %}<span class="hint">Object not identified</span>{% endif %}
-            <span class="row-meta dev-only">{{ row.object_type | lower }}{% if row.where %} · {{ row.where }}{% endif %}</span>
+            <span class="row-meta">{{ row.object_type | lower }}{% if row.where %} · {{ row.where }}{% endif %}</span>
             {% if row.affected_object and row.affected_object != row.object %}<span class="row-meta">Affects <code>{{ row.affected_object }}</code></span>{% endif %}
           </td>
           <td>{{ ui.source(row.source, row.source_label) }}<span class="row-meta">{{ row.evidence_class_label }}</span></td>
           <td>{{ ui.evidence(row.evidence_status, row.evidence_label) }}</td>
           <td>{% if row.policy %}{{ ui.tag(row.blocking_label, 'danger' if row.blocking == 'blocker' else 'warning') }}<span class="row-meta">{{ row.policy_state_label }} · {{ row.policy.item.rule_id }}</span>{% else %}<span class="hint">Does not block</span>{% endif %}</td>
-          <td>{{ row.validation_label }}{% if row.review_state %}<span class="row-meta">Review: {{ row.review_label }}</span>{% endif %}</td>
           <td><a class="btn-sm" href="{{ ui.finding_href(view, row.id) }}" data-open-finding="{{ row.id }}" aria-haspopup="dialog">Details<span class="sr-only"> for {{ row.id }}</span></a></td>
         </tr>
         {% endfor %}

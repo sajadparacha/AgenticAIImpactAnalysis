@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Prepare email{% endblock %}
+{% block content %}
+<nav class="crumbs" aria-label="Breadcrumb">
+  <ol>
+    {% if mode == "agentic" %}<li><a href="/agentic">Agent-guided analysis</a></li>{% else %}<li><a href="/">Hybrid analysis</a></li>{% endif %}
+    <li><a href="/analyses/{{ run_id }}/report">Impact report</a></li>
+    <li aria-current="page">Prepare email</li>
+  </ol>
+</nav>
+<section class="page-intro">
+  <div>
+    <h1>Prepare email</h1>
+    <p class="lede">A draft built from this report's open blockers, validation items, and findings. Nothing is sent from this application. Review the draft, then copy it, open it in your mail app, or download it.</p>
+  </div>
+</section>
+
+<nav class="tabs" aria-label="Email version">
+  {% for key, label in audiences.items() %}
+  <a href="/analyses/{{ run_id }}/email?audience={{ key }}" aria-selected="{{ 'true' if key == email.audience else 'false' }}">{{ label }}</a>
+  {% endfor %}
+</nav>
+
+<section class="card email-card">
+  {% if not email.to %}
+  <p class="notice notice-warning">No recipients are configured for the {{ email.audience_label | lower }}. Set {{ 'OIA_EMAIL_DEVELOPERS' if email.audience == 'developer' else 'OIA_EMAIL_SUPPORT' }} to a comma-separated list, or add them in your mail app.</p>
+  {% endif %}
+  {% if not public_url_set %}
+  <p class="notice notice-warning">The report link uses this server's own address, which colleagues may not be able to open. Set OIA_PUBLIC_BASE_URL, or attach the PDF export instead.</p>
+  {% endif %}
+  <dl class="email-meta">
+    <dt>To</dt><dd>{{ email.to | join(', ') if email.to else 'Not configured' }}</dd>
+    <dt>Subject</dt><dd>{{ email.subject }}</dd>
+  </dl>
+  <div class="rv-actions">
+    <button type="button" data-copy="#email-body">Copy email text</button>
+    <a class="button btn-ghost" href="{{ email.mailto }}">Open in mail app</a>
+    <a class="button btn-ghost" href="/analyses/{{ run_id }}/email.eml?audience={{ email.audience }}">Download .eml draft</a>
+    <a class="button btn-ghost" href="/analyses/{{ run_id }}/export?format=pdf">Download report PDF</a>
+  </div>
+  {% if email.mailto_truncated %}
+  <p class="hint">This email is too long for a mail link, so your mail app opens with the recipients and subject only. Paste the copied text into the body, or use the .eml draft.</p>
+  {% endif %}
+  <pre id="email-body" class="email-body">{{ email.text }}</pre>
+</section>
+{% endblock %}

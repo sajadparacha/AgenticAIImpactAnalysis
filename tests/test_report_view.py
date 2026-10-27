@@ -94,12 +94,12 @@ def test_initial_state_rejects_unknown_deep_link_values(tmp_path):
     view = build_report_view(report)
     first_changed = next(diff["key"] for diff in view["diffs"] if diff["state"] != "unchanged")
     bad = initial_state(view, {"tab": "admin", "finding": "F-NOPE", "object": "../etc", "line": "1;drop", "side": "x", "mode": "root"})
-    assert bad == {"tab": "overview", "finding": "", "object": first_changed, "line": None, "side": "t", "mode": "developer"}
+    assert bad == {"tab": "overview", "finding": "", "object": first_changed, "line": None, "side": "t"}
     finding_id = view["rows"][0]["id"]
     assert initial_state(view, {"finding": finding_id})["tab"] == "findings"
     key = view["diffs"][-1]["key"]
     deep = initial_state(view, {"object": key, "line": "7", "side": "p", "mode": "support"})
-    assert deep == {"tab": "source", "finding": "", "object": key, "line": 7, "side": "p", "mode": "support"}
+    assert deep == {"tab": "source", "finding": "", "object": key, "line": 7, "side": "p"}
 
 
 def test_source_diff_collapses_distant_context_and_links_findings(tmp_path):
@@ -142,6 +142,28 @@ def test_dependencies_link_findings_by_whole_object_name(tmp_path):
     assert [dep["dom_id"] for dep in row["dependencies"]] == [table["dom_id"]]
 
 
+def test_audit_phase_lines_split_out_finding_severity_and_environment(tmp_path):
+    report = _reviewed_report(tmp_path)
+    known = report.findings[0].id
+    status = {
+        "status": "completed",
+        "steps": {
+            "snapshotting": {"lines": ["production DEMO.PKG_STATUS PACKAGE: captured, checksum ab12."]},
+            "dependencies": {"lines": [f"{known} high error_contract: Public exceptions changed.", "F-0000ABCD low coverage: production DEMO.SYN SYNONYM: not resolved."]},
+            "validating": {"lines": [f"{known}: Kept after evidence check."]},
+        },
+    }
+    phases = {phase["key"]: phase for phase in build_report_view(report, status)["audit"]["phases"]}
+    snapshot = phases["snapshotting"]["lines"][0]
+    assert snapshot["environment"] == "Production" and snapshot["text"] == "DEMO.PKG_STATUS PACKAGE: captured, checksum ab12."
+    linked, unknown = phases["dependencies"]["lines"]
+    assert (linked["finding_id"], linked["linked"], linked["severity"], linked["category"]) == (known, True, "high", "Error contract")
+    assert linked["text"] == "Public exceptions changed."
+    assert unknown["linked"] is False and unknown["environment"] == "Production" and unknown["text"] == "DEMO.SYN SYNONYM: not resolved."
+    validated = phases["validating"]["lines"][0]
+    assert validated["finding_id"] == known and validated["severity"] == "" and validated["text"] == "Kept after evidence check."
+
+
 def test_audit_omits_investigator_thoughts_and_marks_missing_phases(tmp_path):
     report = _reviewed_report(tmp_path)
     thought = "Private reasoning about the package."
@@ -156,7 +178,7 @@ def test_audit_omits_investigator_thoughts_and_marks_missing_phases(tmp_path):
     assert thought not in rendered
     assert [event["message"] for event in audit["events"]] == ["Report ready."]
     phases = {phase["key"]: phase for phase in audit["phases"]}
-    assert phases["comparing"]["recorded"] and phases["comparing"]["lines"] == ["PACKAGE BODY changed"]
+    assert phases["comparing"]["recorded"] and [line["text"] for line in phases["comparing"]["lines"]] == ["PACKAGE BODY changed"]
     assert not phases["queued"]["recorded"]
     missing = build_report_view(report)
     assert missing["audit"]["status_available"] is False
@@ -199,13 +221,13 @@ def test_report_page_deep_links_open_the_requested_panel_and_finding(tmp_path):
     key = exported["diffs"][0]["owner"] + "." + exported["diffs"][0]["name"] + ":" + exported["diffs"][0]["object_type"]
     source = client.get(f"/analyses/{run_id}/report", params={"tab": "source", "object": key, "line": "2", "mode": "support"}).text
     assert not _panel_hidden(source, "source") and _panel_hidden(source, "findings")
-    assert f'data-object="{key}"' in source and 'data-line="2"' in source and 'data-mode="support"' in source
+    assert f'data-object="{key}"' in source and 'data-line="2"' in source and "data-mode=" not in source
 
     fallback = client.get(f"/analyses/{run_id}/report?tab=<script>&finding=x").text
     assert not _panel_hidden(fallback, "overview") and "<script>" not in fallback.split('id="risk"', 1)[0]
 
 
-def test_report_page_keeps_exports_modes_and_legacy_anchors(tmp_path):
+def test_report_page_keeps_exports_and_legacy_anchors_without_a_presentation_switch(tmp_path):
     client = client_for(tmp_path)
     login(client)
     run_id = _start(client, "DEMO.PKG_STATUS")
@@ -213,7 +235,8 @@ def test_report_page_keeps_exports_modes_and_legacy_anchors(tmp_path):
     assert "Eligible for review after testing" in page and "Not recorded" in page
     for fmt in ("html", "pdf", "json"):
         assert f"/analyses/{run_id}/export?format={fmt}" in page
-    assert 'data-mode-set="developer"' in page and 'data-mode-set="support"' in page
+    assert "data-mode-set" not in page and "mode-switch" not in page
+    assert "Plain-language risk summary" in page
     for anchor in ("changes", "comparison", "dependencies", "ai", "risk", "limitations"):
         assert f'id="{anchor}"' in page
     html = client.get(f"/analyses/{run_id}/export?format=html")

@@ -141,7 +141,8 @@ def test_authid_and_error_declarations_ignore_comments():
         ("security", {"grant_difference": "missing_in_production"}, "SEC-GRANT-MISSING"),
         ("security", {"grant_difference": "extra_in_production"}, "SEC-GRANT-EXTRA"),
         ("format", {}, "FMT-ONLY"),
-        ("dependency", {}, "OTHER-DEPENDENCY"),
+        ("dependency", {"missing_object": True}, "DEP-MISSING-OBJECT"),
+        ("performance", {}, "OTHER-PERFORMANCE"),
     ],
 )
 def test_classify_assigns_rule_ids(category, attributes, expected):
@@ -401,6 +402,28 @@ def test_dependent_findings_distinguish_new_and_preexisting_invalid_objects():
     assert sum(1 for item in summary.objects if item.role == "dependent" and item.name == "PKG") == 0
 
 
+def test_unreadable_compile_errors_are_not_reported_as_empty():
+    class Errors:
+        def __init__(self, fetched):
+            self.fetched = fetched
+
+        def fetch_object_status(self, owner, name):
+            return StatusFetch(objects=[("PACKAGE BODY", "INVALID", None)])
+
+        def fetch_compile_errors(self, owner, name):
+            return self.fetched
+
+    expected = {
+        "ALL_ERRORS could not be read": ErrorFetch(inaccessible=True),
+        "ALL_ERRORS was not read in this run": ErrorFetch(inaccessible=True, not_read=True),
+        "no ALL_ERRORS rows were visible": ErrorFetch(),
+    }
+    for text, fetched in expected.items():
+        summary = collect_compilation({"test": Errors(fetched)}, [("APP", "PKG")], {})
+        [finding] = compilation_findings("run", summary, {"test": "TEST"})
+        assert f"Compilation errors: {text}." in finding.evidence
+
+
 def test_production_only_invalid_package_is_a_medium_finding():
     test = _gateway({("APP", "PKG", "PACKAGE BODY"): "VALID"})
     production = _gateway({("APP", "PKG", "PACKAGE BODY"): "INVALID"})
@@ -438,3 +461,59 @@ def test_dependency_diagram_escapes_names_and_limits_columns():
     assert svg.startswith("<svg") and svg.endswith("</svg>")
     assert "<script>" not in svg and "&lt;script&gt;" in svg
     assert "&lt;C5&gt;" in svg and "&lt;C6&gt;" not in svg
+
+
+# ----------------------------------------------------------------- blind spots
+
+
+def test_blind_spot_questions_come_from_dynamic_sql_findings_and_synonym_edges():
+    from oracle_impact.analysis.blind_spots import collect_blind_spots
+
+    dynamic = _finding(change_category="dynamic_sql", severity=Severity.HIGH, attributes={"routine": "RUN"}, changed_lines_test=[6])
+    edge = lambda env, owner="APP": SimpleNamespace(
+        direction="referenced", owner="APP", name="PKG", object_type="PACKAGE BODY",
+        referenced_owner=owner, referenced_name="FX_RATES", referenced_type="SYNONYM", database=env,
+    )
+    spots, left_out = collect_blind_spots([dynamic], [edge("test"), edge("production"), edge("test", "SYS")], 6)
+    assert [(spot.id, spot.kind) for spot in spots] == [("BS-1", "dynamic_sql"), ("BS-2", "synonym")]
+    assert spots[0].anchor_id == "F-1" and "RUN" in spots[0].question()
+    assert spots[1].environments == ["test", "production"]
+    assert left_out == 0
+    assert collect_blind_spots([dynamic], [edge("test")], 1)[1] == 1
+
+
+def test_blind_spot_tools_stay_inside_the_question_allowlist():
+    from oracle_impact.analysis.blind_spots import BlindSpot
+    from oracle_impact.infrastructure.llm.blind_spot_tools import MAX_LINES_PER_READ, BlindSpotContext, dispatch_blind_spot_tool
+
+    body = "".join(f"-- line {index}\n" for index in range(1, 101)) + "v := 'SELECT * FROM app.orders';\n"
+    snapshot = Snapshot(
+        captured_at="2026-10-27T00:00:00+00:00",
+        packages=["APP.PKG"],
+        objects=[CapturedObject(environment="test", database_id="t", owner="APP", name="PKG", object_type="PACKAGE BODY",
+                                found=True, source=body, sha256="x", retrieved_at="2026-10-27T00:00:00+00:00")],
+    )
+    catalog = Catalog()
+    catalog.add_table("APP", "ORDERS")
+
+    class Down:
+        def fetch_object_status(self, owner, name):
+            raise OracleAccessError("down")
+
+    spot = BlindSpot(id="BS-1", kind="dynamic_sql", owner="APP", name="PKG", lines=[101])
+    context = BlindSpotContext(snapshot, {"test": FixtureGateway("test", "t", "TEST", catalog), "production": Down()}, [spot])
+
+    def call(tool, **arguments):
+        return dispatch_blind_spot_tool(tool, arguments, context)
+
+    window = call("read_source_lines", env="test", owner="APP", name="PKG", start_line=1, end_line=1000)
+    assert len(window["lines"]) == MAX_LINES_PER_READ
+    assert "error" in call("read_source_lines", env="test", owner="APP", name="OTHER", start_line=1, end_line=5)
+    assert "error" in call("read_synonym", env="test", owner="APP", name="FX_RATES")
+    assert call("check_object", env="test", owner="APP", name="ORDERS") == {"exists": True, "types": ["TABLE"]}
+    assert "error" in call("check_object", env="test", owner="APP", name="PAYROLL")
+    assert "error" in call("check_object", env="test", owner="SYS", name="ORDERS")
+    assert "error" in call("check_object", env="uat", owner="APP", name="ORDERS")
+    assert "error" in call("drop_table", env="test", owner="APP", name="ORDERS")
+    assert "error" in call("check_object", env="production", owner="APP", name="ORDERS")
+    assert context.facts[("production", "APP", "ORDERS")] == "could not be read"

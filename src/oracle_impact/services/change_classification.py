@@ -2,9 +2,9 @@
 
 A difference is only *planned* when an approved change manifest entry pins the
 exact Test checksum. Existing in Test is not enough. *Unexpected drift* is a
-checksum that contradicts a recorded fact: Production or AUTUMN no longer
-matches its trusted baseline, or Test no longer matches the checksum that was
-approved. Everything else that differs is *unclassified*.
+checksum that contradicts a recorded fact: Production no longer matches its
+trusted baseline, or Test no longer matches the checksum that was approved.
+Everything else that differs is *unclassified*.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -21,6 +21,7 @@ LABELS = {
 }
 TONES = {PLANNED: "success", DRIFT: "danger", UNCLASSIFIED: "warning", NO_CHANGE: "neutral", UNKNOWN: "neutral"}
 _CHANGED = {"modified", "created", "deleted", "formatting"}
+_ENVIRONMENTS = ("test", "production")
 
 
 def object_key(owner: str, name: str, object_type: str) -> str:
@@ -108,28 +109,25 @@ def _baseline_note(state: str, max_age_days: int) -> str:
 
 def _classify(state, baselines: list[dict], manifest: list[dict], max_age_days: int, now: datetime) -> dict:
     owner, name, object_type = state.owner, state.name, state.object_type
-    hashes = {item.environment: (item.sha256 if item.found else None) for item in state.environments if not item.inaccessible}
+    hashes = {
+        item.environment: (item.sha256 if item.found else None)
+        for item in state.environments
+        if not item.inaccessible and item.environment in _ENVIRONMENTS
+    }
     reasons: list[str] = []
     drift = False
     production_only = False
-    baseline_entries = {}
-    for environment in ("production", "autumn"):
-        entry = next(
-            (item for item in reversed(baselines) if item.get("environment") == environment and _matches(item, owner, name, object_type)),
-            None,
+    production_baseline = next(
+        (item for item in reversed(baselines) if item.get("environment") == "production" and _matches(item, owner, name, object_type)),
+        None,
+    )
+    if production_baseline is not None and "production" in hashes and hashes["production"] != (production_baseline.get("sha256") or None):
+        drift = True
+        reasons.append(
+            f"Production no longer matches the trusted baseline set on {production_baseline.get('set_at', 'an unknown date')[:10]}. "
+            "It was changed outside the recorded release path."
         )
-        baseline_entries[environment] = entry
-        if entry is None or environment not in hashes:
-            continue
-        if hashes[environment] != (entry.get("sha256") or None):
-            drift = True
-            label = "Production" if environment == "production" else "AUTUMN"
-            reasons.append(
-                f"{label} no longer matches the trusted baseline set on {entry.get('set_at', 'an unknown date')[:10]}. "
-                "It was changed outside the recorded release path."
-            )
-            if environment == "production" and hashes.get("production") != hashes.get("test"):
-                production_only = True
+        production_only = hashes.get("production") != hashes.get("test")
     entries = [item for item in manifest if _matches(item, owner, name, object_type)]
     test_hash = hashes.get("test")
     pinned = next((item for item in reversed(entries) if (item.get("sha256") or None) == test_hash), None)
@@ -150,16 +148,6 @@ def _classify(state, baselines: list[dict], manifest: list[dict], max_age_days: 
         reasons.append("No approved change record pins this Test version. Existing in Test does not make it planned.")
     else:
         classification = NO_CHANGE
-    autumn = None
-    if "autumn" in hashes:
-        if hashes["autumn"] == hashes.get("test"):
-            autumn = "matches_test"
-        elif hashes["autumn"] == hashes.get("production"):
-            autumn = "matches_production"
-        else:
-            autumn = "differs_from_both"
-            reasons.append("AUTUMN holds a version that matches neither Test nor Production.")
-    production_baseline = baseline_entries["production"]
     return {
         "key": object_key(owner, name, object_type),
         "qualified": f"{owner}.{name}",
@@ -173,11 +161,10 @@ def _classify(state, baselines: list[dict], manifest: list[dict], max_age_days: 
         "reasons": reasons,
         "production_only": production_only,
         "hashes": hashes,
-        "autumn": autumn,
         "manifest": pinned or (entries[-1] if entries else None),
         "baseline": {
             "state": baseline_state(production_baseline, max_age_days, now),
             "entry": production_baseline,
         },
-        "environments": [item.model_dump() for item in state.environments],
+        "environments": [item.model_dump() for item in state.environments if item.environment in _ENVIRONMENTS],
     }

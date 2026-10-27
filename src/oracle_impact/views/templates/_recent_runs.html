@@ -1,0 +1,26 @@
+<section class="panel">
+  <h2>Recent runs</h2>
+  {% if runs %}
+  <div class="table-scroll">
+  <table>
+    <thead>
+      <tr><th>Run</th><th>Packages</th><th>Mode</th><th>Model</th><th>Status</th><th>Recommendation</th></tr>
+    </thead>
+    <tbody>
+      {% for run in runs %}
+      <tr>
+        <td><a href="/analyses/{{ run.run_id }}">{{ run.run_id }}</a></td>
+        <td>{{ run.packages | join(", ") }}</td>
+        <td>{{ "Agent-guided" if run.mode == "agentic" else "Hybrid" }}</td>
+        <td>{{ run.model or "—" }}</td>
+        <td>{{ run.status }}</td>
+        <td>{{ run.recommendation or "—" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="hint">No analyses yet.</p>
+  {% endif %}
+</section>

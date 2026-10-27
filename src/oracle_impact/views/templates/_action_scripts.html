@@ -1,0 +1,13 @@
+<ul class="hint snippet-rules">
+  <li>Built from the evidence in this report. Each script names the environment it is for.</li>
+  <li>Review it with the object owner or a DBA before running it. This application never runs these scripts.</li>
+</ul>
+{% for script in scripts %}
+<div class="sql-snippet">
+  <div class="sql-snippet-bar">
+    <strong>{{ script.title }}</strong>
+    <button type="button" data-copy>Copy</button>
+  </div>
+  <pre>{{ script.sql }}</pre>
+</div>
+{% endfor %}

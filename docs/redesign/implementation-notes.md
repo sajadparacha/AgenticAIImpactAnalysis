@@ -16,7 +16,7 @@ Every value on the page is read from `runs/<id>/report.json`, `status.json`, `re
 | "Why deployment is on hold" | Unresolved policy items and drift, with finding, object, severity, evidence, status, and action |
 | Findings explorer | `report.findings` with `rule_id`, `fingerprint`, `severity_rationale`, evidence class, policy item, validation and review state |
 | Changed objects | `report.object_states`, classification, manifest, baselines, compilation, transaction profiles |
-| Source comparison | `report.diffs` for Test to Production; `report.comparisons` for Test to AUTUMN and AUTUMN to Production |
+| Source comparison | `report.diffs` for Test to Production |
 | Dependencies | `report.dependency_edges` (provenance dictionary, source scan, unresolved), impact path tree, business mappings |
 | Validation and approval | Policy items, review records, approval history, coverage, external checks, performance status |
 | Audit trail | Phase and tool-call times, review and registry events, approval history, run history and comparison |
@@ -31,7 +31,7 @@ Confirmed (a mapped object has a confirmed finding), Potential, "No impact ident
 
 ## URL contract
 
-`/analyses/<id>/report` accepts `tab` (`overview`, `findings`, `objects`, `source`, `dependencies`, `validation`, `audit`), `finding`, `object` (`OWNER.NAME:OBJECT TYPE`), `line`, `side` (`t` or `p`), `mode` (`developer` or `support`), `cmp` (`test:autumn` or `autumn:production`), and `msg` (a fixed action message code). Unknown values fall back to defaults. Filter and sort state is kept in the URL by the script: findings `q`, `sev`, `type`, `cat`, `src`, `ev`, `ec` (evidence class), `val` (validation state), `blk` (blocking), `env`, `chg` (change type), `drivers`, `sort`; dependencies `dq`, `dir`, `impact`; edges `eq`, `edir`, `eprov`, `etype`. The fragments `#changes`, `#comparison`, `#dependencies`, `#ai`, `#risk`, `#limitations`, `#issue-<id>`, `#objects`, `#compilation`, `#transactions`, `#coverage`, `#approval`, `#regression-tests`, `#performance`, and `#history` resolve to their tab.
+`/analyses/<id>/report` accepts `tab` (`overview`, `findings`, `objects`, `source`, `dependencies`, `validation`, `audit`), `finding`, `object` (`OWNER.NAME:OBJECT TYPE`), `line`, `side` (`t` or `p`), `mode` (`developer` or `support`), and `msg` (a fixed action message code). Unknown values fall back to defaults. Filter and sort state is kept in the URL by the script: findings `q`, `sev`, `type`, `cat`, `src`, `ev`, `ec` (evidence class), `val` (validation state), `blk` (blocking), `env`, `chg` (change type), `drivers`, `sort`; dependencies `dq`, `dir`, `impact`; edges `eq`, `edir`, `eprov`, `etype`. The fragments `#changes`, `#comparison`, `#dependencies`, `#ai`, `#risk`, `#limitations`, `#issue-<id>`, `#objects`, `#compilation`, `#transactions`, `#coverage`, `#approval`, `#regression-tests`, `#performance`, and `#history` resolve to their tab.
 
 Export links (`?format=html|pdf|json`) are unchanged. The HTML and PDF exports render every panel and finding detail, without forms. The fpdf2 PDF fallback adds the readiness decision, the four states, the hold reasons, coverage, and compilation.
 
@@ -43,7 +43,7 @@ Export links (`?format=html|pdf|json`) are unchanged. The HTML and PDF exports r
 | `POST /analyses/{id}/validations` | Signed in | Record or update a validation result for a finding |
 | `POST /analyses/{id}/reviews` | Signed in | Record a reviewer decision for a finding |
 | `POST /analyses/{id}/approval` | Approver | Record Approved, Rejected, or On hold. Approved needs Deployment recommended |
-| `POST /analyses/{id}/baseline` | Approver | Trust the captured Production or AUTUMN checksum of one or all objects |
+| `POST /analyses/{id}/baseline` | Approver | Trust the captured Production checksum of one or all objects |
 | `POST /analyses/{id}/manifest` | Approver | Pin the captured Test checksum under a change reference |
 | `POST /registry/manifest/{entry}/withdraw` | Approver | Withdraw a manifest entry with a reason |
 | `POST /registry/baselines/{entry}/clear` | Approver | Clear a trusted baseline with a reason |

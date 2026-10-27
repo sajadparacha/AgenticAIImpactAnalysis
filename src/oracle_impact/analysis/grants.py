@@ -11,6 +11,8 @@ class GrantChange:
     kind: str
     grants: list[str] = field(default_factory=list)
     complete: bool = True
+    pairs: list[tuple[str, str]] = field(default_factory=list)
+    """(grantee, privilege) for each entry in grants."""
 
 
 def compare_grants(package: PackageRef, test_fetch, prod_fetch) -> tuple[list[GrantChange], list[str]]:
@@ -42,6 +44,7 @@ def compare_grants(package: PackageRef, test_fetch, prod_fetch) -> tuple[list[Gr
                     kind=kind,
                     grants=[f"{privilege} to {grantee}" for grantee, privilege in sorted(missing)],
                     complete=complete,
+                    pairs=sorted(missing),
                 )
             )
     return changes, notes

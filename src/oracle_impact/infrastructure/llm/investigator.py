@@ -7,16 +7,36 @@ error. Deterministic findings are never replaced by this component.
 import json
 import re
 import time
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+from oracle_impact.analysis.blind_spots import SYNONYM, BlindSpot
+from oracle_impact.analysis.identifiers import is_identifier
 from oracle_impact.infrastructure.evidence.validator import validate_findings
+from oracle_impact.infrastructure.llm.blind_spot_tools import (
+    BlindSpotContext,
+    blind_spot_tool_schemas,
+    dispatch_blind_spot_tool,
+)
+from oracle_impact.infrastructure.llm.live_tools import (
+    LiveToolContext,
+    RequiredRead,
+    dispatch_live_tool,
+    live_tool_schemas,
+    outstanding_reads,
+    suggested_calls,
+)
 from oracle_impact.infrastructure.llm.plain_text import simplify_change, simplify_test, simplify_unknown
 from oracle_impact.infrastructure.llm.provider import BudgetExceeded, LlmProvider
 from oracle_impact.infrastructure.llm.tools import TOOL_SCHEMAS, ToolContext, dispatch_tool
+from oracle_impact.infrastructure.oracle.gateway import OracleAccessError
 from oracle_impact.models.domain import Snapshot
 from oracle_impact.models.report import Finding
 
 _MAX_CASE_ITEMS = 12
+_MAX_FINISH_REJECTIONS = 3
+_CHECKLIST_SHOWN = 12
+_SUMMARY_LIMIT = 800
 
 _SYSTEM = """You explain Oracle findings for a developer who did not write the package.
 The deployment recommendation is already decided. Do not approve it and do not restate the finding in abstract words.
@@ -35,6 +55,39 @@ Do not use the words hypothesis, impact, functionality, inconsistencies, or "com
 When you call a tool, first write one short sentence about what you are going to read. Do not include source text in that sentence.
 """
 
+_GATHER_SYSTEM = """You choose the read order for an Oracle change review. You do not decide the outcome.
+Deterministic checks score what you collect and choose the deployment recommendation. Nothing you write changes it.
+Every tool makes one read-only data dictionary read. Results are short summaries, not source.
+The user message lists the required reads. The last tool result of each turn shows how many remain and the next ones.
+Pick the next unread item. Use env "all" when the same item is needed in every environment. Batch independent calls.
+Before you call a tool, write one short sentence about what you are going to read.
+Finish only when no required reads remain. Then reply with two or three plain sentences about what you read. Do not say whether the change is safe.
+"""
+
+_BLIND_SPOT_SYSTEM = """You look into parts of an Oracle change that the automatic checks could not resolve.
+You do not decide the outcome. Your answers are shown as unverified leads and never change the deployment recommendation.
+Each question has an id such as BS-1. Use the tools to read the lines that build the SQL, to read where a synonym points, or to check whether a named object exists.
+Only names that appear in the cited source or in a synonym read can be checked.
+Then return one JSON object:
+{"answers":[{"question_id":"BS-1","likely_targets":["OWNER.NAME"],"explanation":"","evidence_lines":[],"test_case":"","unknowns":""}]}
+likely_targets: objects the statement or synonym can reach, written OWNER.NAME. Use an empty list when you cannot tell.
+explanation: two short sentences at most, in everyday words. Say "builds SQL while it runs" instead of "dynamic SQL".
+evidence_lines: Test line numbers of the package body that support the answer.
+test_case: one step a tester can run in Test to confirm the answer.
+unknowns: one short sentence about what you could not see, or an empty string.
+Write one answer for every question. Do not say whether the change is safe.
+Before you call a tool, write one short sentence about what you are going to read. Do not include source text in that sentence.
+"""
+_MAX_TARGETS = 6
+
+
+@dataclass
+class GatherResult:
+    tool_log: list[dict] = field(default_factory=list)
+    limitations: list[str] = field(default_factory=list)
+    summary: str = ""
+    remaining: list[RequiredRead] = field(default_factory=list)
+
 
 class Investigator:
     def __init__(
@@ -45,6 +98,8 @@ class Investigator:
         timeout_seconds: int,
         token_budget: int,
         max_depth: int,
+        gather_token_budget: int | None = None,
+        gather_max_calls_per_run: int | None = None,
     ) -> None:
         self.provider = provider
         self.max_calls_per_package = max_calls_per_package
@@ -52,6 +107,8 @@ class Investigator:
         self.timeout_seconds = timeout_seconds
         self.token_budget = token_budget
         self.max_depth = max_depth
+        self.gather_token_budget = gather_token_budget if gather_token_budget is not None else token_budget
+        self.gather_max_calls_per_run = gather_max_calls_per_run if gather_max_calls_per_run is not None else max_calls_per_run
 
     def available_models(self) -> list[str]:
         lister = getattr(self.provider, "list_models", None)
@@ -68,6 +125,8 @@ class Investigator:
             self.timeout_seconds,
             self.token_budget,
             self.max_depth,
+            self.gather_token_budget,
+            self.gather_max_calls_per_run,
         )
 
     def investigate(
@@ -183,6 +242,197 @@ class Investigator:
             limitations.append("The investigator was unavailable. Deterministic findings were kept.")
             return [], tool_log, limitations
 
+    def gather(self, context: LiveToolContext, on_progress=None) -> GatherResult:
+        """Let the model choose the read order until the required-evidence checklist is empty.
+
+        The loop collects reads only. It produces no findings and no recommendation.
+        """
+        result = GatherResult()
+        tools = live_tool_schemas(context.environments)
+        remaining = outstanding_reads(context)
+        messages = [
+            {"role": "system", "content": _GATHER_SYSTEM},
+            {
+                "role": "user",
+                "content": "Selected packages: "
+                + ", ".join(package.qualified for package in context.packages)
+                + ".\nConnected environments: "
+                + ", ".join(context.environments)
+                + ".\nRequired reads so far. More appear as dependency reads reveal objects:\n"
+                + json.dumps(_checklist(remaining, context.environments)),
+            },
+        ]
+        started = time.monotonic()
+        tokens = 0
+        calls = 0
+        rejections = 0
+        per_package: dict[str, int] = {}
+
+        def note(message: str, kind: str = "status") -> None:
+            if on_progress is not None:
+                on_progress(message, kind)
+
+        try:
+            note("The investigator is choosing what to read first.")
+            while True:
+                if time.monotonic() - started > self.timeout_seconds:
+                    raise BudgetExceeded("Investigation timed out.")
+                if tokens > self.gather_token_budget:
+                    raise BudgetExceeded("Investigation token budget was exhausted.")
+                response = self.provider.complete(messages, tools)
+                tokens += response.prompt_tokens + response.completion_tokens
+                thought = _visible_thought(response.reasoning or response.content)
+                if response.tool_calls:
+                    if thought:
+                        note(thought, "thought")
+                    messages.append(
+                        {
+                            "role": "assistant",
+                            "content": response.content or "",
+                            "tool_calls": [
+                                {
+                                    "id": call.call_id or f"call-{calls + index + 1}",
+                                    "type": "function",
+                                    "function": {"name": call.name, "arguments": json.dumps(call.arguments)},
+                                }
+                                for index, call in enumerate(response.tool_calls)
+                            ],
+                        }
+                    )
+                    replies = []
+                    for call in response.tool_calls:
+                        calls += 1
+                        selected = _selected_target(call.arguments, context)
+                        if selected:
+                            per_package[selected] = per_package.get(selected, 0) + 1
+                            if per_package[selected] > self.max_calls_per_package:
+                                raise BudgetExceeded("Per-package tool-call limit was reached.")
+                        if calls > self.gather_max_calls_per_run:
+                            raise BudgetExceeded("Run tool-call limit was reached.")
+                        note(_tool_progress(call), "action")
+                        payload = dispatch_live_tool(call.name, call.arguments or {}, context)
+                        result.tool_log.append(
+                            {
+                                "tool": call.name,
+                                "target": _tool_target(call),
+                                "ok": "error" not in payload,
+                                "result_bytes": len(json.dumps(payload)),
+                                "at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+                            }
+                        )
+                        replies.append((call.call_id or f"call-{calls}", payload))
+                    remaining = outstanding_reads(context)
+                    replies[-1][1]["checklist"] = _checklist(remaining, context.environments)
+                    for call_id, payload in replies:
+                        messages.append({"role": "tool", "tool_call_id": call_id, "content": json.dumps(payload)})
+                    note(
+                        f"{len(remaining)} required read{'s' if len(remaining) != 1 else ''} remain."
+                        if remaining
+                        else "Every required read has been collected.",
+                    )
+                    continue
+                remaining = outstanding_reads(context)
+                if remaining and rejections < _MAX_FINISH_REJECTIONS:
+                    rejections += 1
+                    note("The investigator tried to finish early. Sending back the reads that are still required.")
+                    messages.append({"role": "assistant", "content": response.content or ""})
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": "Required reads are still missing. Read them with the tools before you finish:\n"
+                            + json.dumps(_checklist(remaining, context.environments)),
+                        }
+                    )
+                    continue
+                result.summary = _agent_summary(response.content or "")
+                break
+        except BudgetExceeded as exc:
+            result.limitations.append(str(exc) + " The report was built from the reads collected so far.")
+        except OracleAccessError:
+            raise
+        except Exception:
+            result.limitations.append("The investigator was unavailable. The report was built from the reads collected so far.")
+        result.remaining = outstanding_reads(context)
+        if result.remaining and not result.limitations:
+            result.limitations.append("The investigator finished before every required read was collected.")
+        return result
+
+    def explore_blind_spots(
+        self, spots: list[BlindSpot], context: BlindSpotContext, max_calls: int, on_progress=None
+    ) -> tuple[list[Finding], list[dict], list[str]]:
+        """Ask one narrow question per blind spot. Answers become potential notes that never block or clear deployment."""
+        tool_log: list[dict] = []
+        if not spots:
+            return [], tool_log, []
+        messages = [
+            {"role": "system", "content": _BLIND_SPOT_SYSTEM},
+            {"role": "user", "content": "Questions:\n" + "\n".join(spot.question() for spot in spots)},
+        ]
+        tools = blind_spot_tool_schemas()
+        started = time.monotonic()
+        tokens = 0
+        calls = 0
+
+        def note(message: str, kind: str = "status") -> None:
+            if on_progress is not None:
+                on_progress(message, kind)
+
+        try:
+            note(f"The investigator is looking into {len(spots)} item{'s' if len(spots) != 1 else ''} the checks could not resolve.")
+            while True:
+                if time.monotonic() - started > self.timeout_seconds:
+                    raise BudgetExceeded("Blind-spot questions timed out.")
+                if tokens > self.token_budget:
+                    raise BudgetExceeded("Blind-spot token budget was exhausted.")
+                response = self.provider.complete(messages, tools)
+                tokens += response.prompt_tokens + response.completion_tokens
+                if not response.tool_calls:
+                    break
+                thought = _visible_thought(response.reasoning or response.content)
+                if thought:
+                    note(thought, "thought")
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": response.content or "",
+                        "tool_calls": [
+                            {
+                                "id": call.call_id or f"bs-{calls + index + 1}",
+                                "type": "function",
+                                "function": {"name": call.name, "arguments": json.dumps(call.arguments)},
+                            }
+                            for index, call in enumerate(response.tool_calls)
+                        ],
+                    }
+                )
+                for call in response.tool_calls:
+                    calls += 1
+                    if calls > max_calls:
+                        raise BudgetExceeded("Blind-spot tool-call limit was reached.")
+                    note(_tool_progress(call), "action")
+                    payload = dispatch_blind_spot_tool(call.name, call.arguments or {}, context)
+                    tool_log.append(
+                        {
+                            "tool": call.name,
+                            "target": _tool_target(call),
+                            "ok": "error" not in payload,
+                            "result_bytes": len(json.dumps(payload)),
+                            "at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+                        }
+                    )
+                    messages.append({"role": "tool", "tool_call_id": call.call_id or f"bs-{calls}", "content": json.dumps(payload)})
+        except BudgetExceeded as exc:
+            return [], tool_log, [str(exc) + " The items the checks could not resolve stay unresolved."]
+        except Exception:
+            return [], tool_log, ["The investigator was unavailable for blind-spot questions. Those items stay unresolved."]
+        drafted, unanswered = _blind_spot_findings(response.content or "", spots, context)
+        limitations = []
+        if unanswered:
+            limitations.append(
+                "The AI did not answer blind-spot question" + ("s " if len(unanswered) > 1 else " ") + ", ".join(unanswered) + ". Those items stay unresolved."
+            )
+        return validate_findings(drafted, context.snapshot), tool_log, limitations
+
 
 def build_case_file(findings: list[Finding]) -> tuple[str, bool]:
     """Questions for the investigator, plus whether a blocker requires a tool read."""
@@ -231,6 +481,26 @@ def _unreviewed_notes(unreviewed: list[str], brief: str) -> list[str]:
     return notes
 
 
+def _checklist(remaining: list[RequiredRead], environments: list[str]) -> dict:
+    return {"remaining": len(remaining), "next": suggested_calls(remaining, environments)[:_CHECKLIST_SHOWN]}
+
+
+def _agent_summary(content: str) -> str:
+    cleaned = " ".join(content.split())
+    if not cleaned or cleaned[0] in "{[":
+        return ""
+    if len(cleaned) > _SUMMARY_LIMIT:
+        cleaned = cleaned[: _SUMMARY_LIMIT - 3].rstrip() + "..."
+    return cleaned
+
+
+def _selected_target(arguments: dict, context: LiveToolContext) -> str | None:
+    arguments = arguments or {}
+    owner = str(arguments.get("owner", "")).upper()
+    name = str(arguments.get("package") or arguments.get("object_name") or arguments.get("name") or "").upper()
+    return f"{owner}.{name}" if context.is_selected(owner, name) else None
+
+
 def _tool_target(call) -> str:
     arguments = call.arguments or {}
     env = str(arguments.get("env", "")).lower()
@@ -270,13 +540,25 @@ def _tool_progress(call) -> str:
         or ""
     ).upper()
     target = f"{owner}.{name}" if owner and name else "an allowlisted object"
-    place = "Test" if env == "test" else "Production" if env == "production" else "the database"
+    place = {
+        "test": "Test",
+        "production": "Production",
+        "all": "every connected environment",
+    }.get(env, "the database")
+    callers = arguments.get("direction") == "referenced_by"
     labels = {
         "get_package_source": f"Reading the package source for {target} in {place}.",
         "get_object_source": f"Reading {target} in {place}.",
-        "get_dependencies": f"Checking what {target} depends on in {place}.",
-        "get_table_metadata": f"Reading the table definition for {target}.",
+        "get_dependencies": f"Checking {'what calls' if callers else 'what'} {target}{'' if callers else ' depends on'} in {place}.",
+        "get_table_metadata": f"Reading the table definition for {target} in {place}.",
         "get_procedure_arguments": f"Reading the arguments of {target} in {place}.",
+        "get_arguments": f"Reading the arguments of {target} in {place}.",
+        "get_object_status": f"Checking whether {target} is valid in {place}.",
+        "get_grants": f"Reading the grants on {target} in {place}.",
+        "get_compile_errors": f"Reading compile errors for {target} in {place}.",
+        "read_source_lines": f"Reading lines {arguments.get('start_line')} to {arguments.get('end_line')} of {target} in {place}.",
+        "read_synonym": f"Reading where synonym {target} points in {place}.",
+        "check_object": f"Checking whether {target} exists in {place}.",
     }
     return labels.get(call.name, f"Using {call.name} on {target} in {place}.")
 
@@ -323,6 +605,96 @@ def _parse_findings(content: str, anchors: list[Finding]) -> list[Finding]:
         except (TypeError, ValueError):
             continue
     return findings
+
+
+def _blind_spot_findings(content: str, spots: list[BlindSpot], context: BlindSpotContext) -> tuple[list[Finding], list[str]]:
+    payload = _json_object(content) or {}
+    by_id = {spot.id: spot for spot in spots}
+    answered: dict[str, Finding] = {}
+    for raw in payload.get("answers") or []:
+        if not isinstance(raw, dict):
+            continue
+        spot = by_id.get(str(raw.get("question_id") or ""))
+        if spot is None or spot.id in answered:
+            continue
+        source = context.snapshot.text("test", spot.owner, spot.name, "PACKAGE BODY").splitlines()
+        lines = []
+        for value in raw.get("evidence_lines") or []:
+            try:
+                line = int(value)
+            except (TypeError, ValueError):
+                continue
+            if 1 <= line <= len(source) and line not in lines:
+                lines.append(line)
+        if not lines:
+            lines = list(spot.lines) or _mentions(source, spot.synonym_name)
+        targets = _targets(raw.get("likely_targets"), spot.owner)
+        explanation = _sentence(str(raw.get("explanation") or ""))
+        tests = [_sentence(item) for item in _text_items(raw.get("test_case"))][:1]
+        unknowns = [_sentence(item) for item in _text_items(raw.get("unknowns"))][:1]
+        attributes = {
+            "blind_spot": spot.kind,
+            "question_id": spot.id,
+            "subject": spot.subject,
+            "likely_targets": targets,
+            "checked": _checked(spot, targets, context),
+            "unknowns": unknowns,
+            "blocks_eligibility": False,
+        }
+        if spot.anchor_id:
+            attributes["review_of"] = spot.anchor_id
+        answered[spot.id] = Finding(
+            id=f"AI-{spot.id}",
+            changed_object=f"{spot.owner}.{spot.name}",
+            object_owner=spot.owner,
+            object_name=spot.name,
+            object_type="PACKAGE BODY",
+            source_database="test",
+            changed_lines_test=lines[:12],
+            change_category="dependency" if spot.kind == SYNONYM else "dynamic_sql",
+            affected_object=targets[0] if targets else None,
+            evidence=explanation or "The AI gave no explanation.",
+            severity="low",
+            confidence="low",
+            status="potential",
+            explanation=explanation or "The AI gave no explanation.",
+            recommended_action="Confirm this lead with the suggested test. It does not change the deployment recommendation.",
+            proposed_tests=tests,
+            attributes=attributes,
+            origin="investigator",
+        )
+    unanswered = [spot.id for spot in spots if spot.id not in answered]
+    return [answered[spot.id] for spot in spots if spot.id in answered], unanswered
+
+
+def _targets(value: object, default_owner: str) -> list[str]:
+    targets = []
+    for item in _text_items(value):
+        owner, _, name = item.upper().strip().rpartition(".")
+        owner = owner or default_owner
+        qualified = f"{owner}.{name}"
+        if is_identifier(owner) and is_identifier(name) and qualified not in targets:
+            targets.append(qualified)
+    return targets[:_MAX_TARGETS]
+
+
+def _mentions(source: list[str], name: str) -> list[int]:
+    if not name:
+        return []
+    pattern = re.compile(rf"\b{re.escape(name)}\b", re.I)
+    return [number for number, text in enumerate(source, start=1) if pattern.search(text)][:3]
+
+
+def _checked(spot: BlindSpot, targets: list[str], context: BlindSpotContext) -> list[dict]:
+    """Results of the reads the investigator made for this question, as recorded by the tools."""
+    wanted = {tuple(target.split(".", 1)) for target in targets}
+    if spot.kind == SYNONYM:
+        wanted.add((spot.synonym_owner, spot.synonym_name))
+    return [
+        {"environment": env, "object": f"{owner}.{name}", "result": result}
+        for (env, owner, name), result in sorted(context.facts.items())
+        if (owner, name) in wanted
+    ]
 
 
 def _json_object(content: str) -> dict | None:

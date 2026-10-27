@@ -512,7 +512,11 @@ def _data_finding(run_id, snapshot, owner, name, routine, ref, metadata: TableMe
         confidence=Confidence.HIGH if status == EvidenceStatus.CONFIRMED else Confidence.MEDIUM,
         status=status,
         explanation=detail + " Static inspection cannot prove which rows the statement changes at runtime.",
-        recommended_action="Review the table change with the data owner and run the affected business transaction in Test.",
+        recommended_action=(
+            f"Deploy {metadata.owner}.{metadata.name} to Production before the package, or remove the reference, then run a new analysis."
+            if attributes.get("missing_object")
+            else "Review the table change with the data owner and run the affected business transaction in Test."
+        ),
         proposed_tests=[
             f"Execute {routine.name} against a Test copy of {metadata.owner}.{metadata.name}.",
             "Confirm triggers and constraints still enforce the expected integrity rules.",
@@ -617,7 +621,7 @@ def _dynamic_finding(run_id, snapshot, owner, name, routine: RoutineScan) -> Fin
         explanation="Dynamic SQL was not marked safe. Its target objects are unknown.",
         recommended_action="Capture the runtime SQL and include those objects in a follow-up analysis.",
         proposed_tests=["Log the statement built by EXECUTE IMMEDIATE or OPEN FOR in Test."],
-        attributes={"blocks_eligibility": True},
+        attributes={"blocks_eligibility": True, "routine": routine.name},
     )
 
 
@@ -891,7 +895,10 @@ def _grant_finding(run_id, snapshot, change: GrantChange) -> Finding:
         explanation=explanation,
         recommended_action=action,
         proposed_tests=tests,
-        attributes={"grant_difference": change.kind},
+        attributes={
+            "grant_difference": change.kind,
+            "grants": [{"grantee": grantee, "privilege": privilege} for grantee, privilege in change.pairs],
+        },
     )
 
 

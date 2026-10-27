@@ -14,6 +14,7 @@ from oracle_impact.infrastructure.oracle.gateway import (
     OracleUnavailable,
     SourceRecord,
     StatusFetch,
+    SynonymFetch,
     utc_now,
 )
 from oracle_impact.infrastructure.oracle.queries import QUERIES, SESSION_SQL, apply_dictionary_views
@@ -180,6 +181,18 @@ class OracledbGateway:
                 for row in rows
             ]
         )
+
+    def fetch_synonym(self, owner: str, name: str) -> SynonymFetch:
+        try:
+            rows = self._select("synonym_target", owner=owner, name=name)
+        except OracleUnavailable:
+            raise
+        except OracleAccessError:
+            return SynonymFetch(inaccessible=True)
+        if not rows:
+            return SynonymFetch()
+        target_owner, target_name, db_link = rows[0]
+        return SynonymFetch(found=True, target_owner=target_owner or "", target_name=target_name or "", db_link=db_link or "")
 
     def fetch_table(self, owner: str, table: str) -> TableMetadata:
         try:
