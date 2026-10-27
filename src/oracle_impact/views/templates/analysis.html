@@ -1,13 +1,8 @@
 {% extends "base.html" %}
+{% from "_ui.html" import crumbs %}
 {% block title %}Run {{ run_id[:8] }} progress{% endblock %}
 {% block content %}
-<nav class="crumbs" aria-label="Breadcrumb">
-  <ol>
-    {% if mode == "agentic" %}<li><a href="/agentic">Agent-guided analysis</a></li>{% else %}<li><a href="/">Hybrid analysis</a></li>{% endif %}
-    <li><span title="{{ run_id }}">Run {{ run_id[:8] }}</span></li>
-    <li aria-current="page">Progress</li>
-  </ol>
-</nav>
+{{ crumbs([{"label": "New analysis", "href": "/"}, {"label": "Run " ~ run_id[:8], "title": run_id}, {"label": "Progress"}]) }}
 <section class="page-intro">
   <div>
     <h1>Analysis progress</h1>

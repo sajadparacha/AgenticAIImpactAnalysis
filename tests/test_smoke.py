@@ -25,7 +25,7 @@ def test_dashboard_requires_sign_in_and_renders(tmp_path: Path):
     page = client.get("/")
     assert page.status_code == 200
     assert "New analysis" in page.text
-    assert "Fixture catalog" in page.text
+    assert "Demo data" in page.text
 
 
 def test_templates_have_no_inline_style_or_script():

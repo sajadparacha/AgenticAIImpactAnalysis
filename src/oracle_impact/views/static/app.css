@@ -217,6 +217,27 @@ th { color: var(--muted); font-weight: 650; white-space: nowrap; }
 .banner { background: var(--blue-bg); border-radius: 10px; padding: 10px 12px; }
 .banner-error { background: var(--red-bg); color: var(--red); }
 
+/* Dashboard */
+.env-line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s3); margin: 0 0 var(--s4); padding: var(--s2) var(--s3); font-size: 0.9rem; color: var(--muted); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+.env-line-item { display: inline-flex; align-items: center; gap: var(--s1); }
+.env-line-item strong { color: var(--ink); }
+.env-line-item .icon { color: var(--muted); }
+.env-arrow { color: #9aa8b8; }
+.env-line-item.is-warn { color: var(--warning); }
+.env-hint { font-size: 0.8rem; }
+.form-card { max-width: 46rem; }
+.form-card .stack { gap: var(--s3); }
+.form-card textarea { min-height: 7rem; resize: vertical; }
+.demo-chips { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); margin: var(--s1) 0 0; }
+.demo-chips-label { color: var(--muted); font-size: 0.9rem; }
+.demo-chip { min-height: 36px; background: white; color: var(--blue); border: 1px solid var(--line); border-radius: var(--radius-pill); padding: 6px 14px; font-size: 0.88rem; font-weight: 600; }
+.demo-chip:hover { background: var(--blue-bg); border-color: #b9d1ee; }
+.more-options { margin-top: var(--s1); border-top: 1px solid var(--line); padding-top: var(--s3); }
+.more-options summary { cursor: pointer; font-weight: 650; color: var(--blue); }
+.more-options summary::after { content: "▾"; content: "▾" / ""; font-size: 0.8em; margin-left: 6px; }
+.more-options[open] summary::after { content: "▴"; content: "▴" / ""; }
+.more-options label, .more-options select { margin-top: var(--s3); }
+
 /* Finding page */
 .origin { display: inline-flex; align-items: center; border-radius: 999px; padding: 3px 8px; font-size: 0.75rem; font-weight: 750; letter-spacing: 0.03em; text-transform: uppercase; }
 .origin-deterministic { background: #e7eef8; color: var(--navy-2); }

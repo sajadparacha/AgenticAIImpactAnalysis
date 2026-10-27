@@ -1,57 +1,61 @@
 {% extends "base.html" %}
-{% block title %}Hybrid analysis{% endblock %}
+{% from "_icons.html" import icon %}
+{% block title %}New analysis{% endblock %}
 {% block content %}
 <section class="page-intro">
   <div>
-    <h1>Review a package change set before promotion</h1>
-    <p class="lede">Compare selected packages in Test, the proposed version, with Production, the baseline.</p>
+    <h1>New analysis</h1>
+    <p class="lede">Compare packages in Test with Production before promotion.</p>
   </div>
 </section>
 
-<section class="stat-row" aria-label="Environment">
-  <article class="stat">
-    <p class="stat-label">Mode</p>
-    <p class="stat-value">{% if settings.fixture_mode %}Fixture catalog{% else %}Live connections{% endif %}</p>
-    <p class="stat-note">{% if settings.fixture_mode %}Computed from bundled sample sources, not a live database.{% else %}Read-only Test and Production connections.{% endif %}</p>
-  </article>
-  <article class="stat">
-    <p class="stat-label">Test</p>
-    <p class="stat-value">{{ settings.test_oracle_label }}</p>
-    <p class="stat-note">{% if settings.fixture_mode %}Fixture{% elif settings.test_oracle_configured %}Configured{% else %}Not configured{% endif %}</p>
-  </article>
-  <article class="stat">
-    <p class="stat-label">Production</p>
-    <p class="stat-value">{{ settings.prod_oracle_label }}</p>
-    <p class="stat-note">{% if settings.fixture_mode %}Fixture{% elif settings.production_oracle_configured %}Configured{% else %}Not configured{% endif %}</p>
-  </article>
-  <article class="stat">
-    <p class="stat-label">AI review</p>
-    <p class="stat-value">{% if settings.llm_egress_enabled %}Enabled{% else %}Off{% endif %}</p>
-    <p class="stat-note">Deterministic checks always run. Source is not sent unless egress is enabled.</p>
-  </article>
-</section>
+<p class="env-line" aria-label="Environment status">
+  <span class="env-line-item">{{ icon("database") }} <strong>{{ "Demo data" if settings.fixture_mode else "Live" }}</strong></span>
+  <span class="env-line-item {% if not settings.fixture_mode and not settings.test_oracle_configured %}is-warn{% endif %}">
+    Test: {{ settings.test_oracle_label }}{% if not settings.fixture_mode and not settings.test_oracle_configured %} <span class="env-hint">not configured — set OIA_TEST_ORACLE_DSN and OIA_TEST_ORACLE_USER</span>{% endif %}
+  </span>
+  <span class="env-line-item env-arrow" aria-hidden="true">→</span>
+  <span class="env-line-item {% if not settings.fixture_mode and not settings.production_oracle_configured %}is-warn{% endif %}">
+    Production: {{ settings.prod_oracle_label }}{% if not settings.fixture_mode and not settings.production_oracle_configured %} <span class="env-hint">not configured — set OIA_PROD_ORACLE_DSN and OIA_PROD_ORACLE_USER</span>{% endif %}
+  </span>
+  <span class="env-line-item {% if not settings.llm_egress_enabled %}is-warn{% endif %}">
+    AI: {{ "on" if settings.llm_egress_enabled else "off" }}{% if not settings.llm_egress_enabled %} <span class="env-hint">investigation is off — set OIA_LLM_EGRESS_ENABLED for an approved endpoint</span>{% endif %}
+  </span>
+</p>
 
-<section class="panel">
+<section class="panel form-card">
   <h2>New analysis</h2>
-  {% if error %}<p class="banner banner-error">{{ error }}</p>{% endif %}
+  {% if error %}<p class="banner banner-error" role="alert">{{ error }}</p>{% endif %}
   <form method="post" action="/analyses" class="stack">
     <input type="hidden" name="csrf_token_value" value="{{ csrf_token }}">
     <label for="packages">Packages</label>
     <textarea id="packages" name="packages" rows="5" required placeholder="DEMO.PKG_STATUS">{{ submitted_packages }}</textarea>
     <p class="hint">One uppercase OWNER.PACKAGE name per line. Quoted and lowercase identifiers are rejected.</p>
     {% if fixture_packages %}
-    <p class="hint">Fixture packages available now: {{ fixture_packages | join(", ") }}.</p>
+    <p class="demo-chips">
+      <span class="demo-chips-label">Try:</span>
+      {% for name in fixture_packages %}<button type="button" class="demo-chip" data-demo-package="{{ name }}">{{ name }}</button>{% endfor %}
+    </p>
     {% endif %}
-    {% if models %}
-    <label for="model">AI investigator model</label>
-    <select id="model" name="model">
-      {% for name in models %}
-      <option value="{{ name }}" {% if name == selected_model %}selected{% endif %}>{{ name }}{% if name == settings.llm_model %} (default){% endif %}</option>
-      {% endfor %}
-    </select>
-    <p class="hint">Models served by the configured endpoint. The choice affects AI notes only; deterministic checks and the recommendation do not change.</p>
+    <label class="check">
+      <input type="checkbox" name="investigate" value="1"{% if investigate %} checked{% endif %}{% if not agentic_available %} disabled{% endif %}>
+      <span>Let the AI investigate</span>
+    </label>
+    <p class="hint">Slower. While it chooses reads it sees short summaries, not source. Afterwards it may send up to 60 source lines per read to ask about dynamic SQL and synonyms. Those answers are AI leads and do not change the verdict.</p>
+    {% if not agentic_available %}<p class="hint">AI investigation is off on this server.</p>{% endif %}
+    {% if models | length > 1 %}
+    <details class="disclosure more-options">
+      <summary>More options</summary>
+      <label for="model">AI investigator model</label>
+      <select id="model" name="model">
+        {% for name in models %}
+        <option value="{{ name }}" {% if name == selected_model %}selected{% endif %}>{{ name }}{% if name == settings.llm_model %} (default){% endif %}</option>
+        {% endfor %}
+      </select>
+      <p class="hint">Models served by the configured endpoint. The choice affects AI notes only; deterministic checks and the recommendation do not change.</p>
+    </details>
     {% endif %}
-    <button type="submit">Start analysis</button>
+    <button type="submit">{{ icon("play") }} Start analysis</button>
   </form>
 </section>
 

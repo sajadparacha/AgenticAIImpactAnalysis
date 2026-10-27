@@ -1,5 +1,34 @@
 document.documentElement.classList.add("js");
 
+document.querySelectorAll("[data-demo-package]").forEach((chip) => {
+  chip.addEventListener("click", () => {
+    const textarea = document.querySelector("#packages");
+    if (!textarea) return;
+    const name = chip.dataset.demoPackage || "";
+    const current = textarea.value.split("\n").map((line) => line.trim()).filter(Boolean);
+    if (!current.includes(name)) current.push(name);
+    textarea.value = current.join("\n");
+    textarea.focus();
+  });
+});
+
+const showAllRuns = document.querySelector("[data-show-all-runs]");
+if (showAllRuns) {
+  const table = document.querySelector("[data-runs-table]");
+  const extras = table ? [...table.querySelectorAll("tr.is-extra")] : [];
+  let expanded = false;
+  const render = () => {
+    extras.forEach((row) => (row.hidden = !expanded));
+    showAllRuns.textContent = expanded ? "Show fewer" : `Show all ${extras.length + 10} runs`;
+  };
+  render();
+  showAllRuns.hidden = false;
+  showAllRuns.addEventListener("click", () => {
+    expanded = !expanded;
+    render();
+  });
+}
+
 const navToggle = document.querySelector("[data-nav-toggle]");
 const siteNav = document.querySelector("[data-site-nav]");
 if (navToggle && siteNav) {

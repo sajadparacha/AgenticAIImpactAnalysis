@@ -53,6 +53,8 @@ Screenshots `screenshots/decision-*.png` were captured at 1440 px from a local f
 
 The UX simplification began on branch `feature/ux-simplification` (spec in `docs/redesign/ux-simplification-plan.md`). Phase 1 Foundation is done: design tokens in `app.css`, a local Lucide icon sprite, a `_ui.html` breadcrumb macro, and rebuilt top navigation with a skip link and mobile menu. Result: **254 passed**.
 
+Phase 2 (Dashboard and single analysis entry) is done: Hybrid and Agent-guided are merged into one "New analysis" form on `/` with demo-package chips, a "Let the AI investigate" checkbox (with the two-phase helper text), and a "More options" model selector shown only when more than one model is served. The environment status is a single line (Demo data / Live, Test → Production, AI on/off). `POST /analyses` accepts `investigate`; `GET /agentic` returns a 303 to `/?investigate=1`; `POST /agentic/analyses` still works. `agentic.html` was deleted and the progress-page breadcrumb now starts at "New analysis". Recent runs shows the latest 10 with a "Show all" toggle. Result: **254 passed**.
+
 ## Remaining defects
 
 - WeasyPrint was not installed, so the PDF path in this environment is the fpdf2 fallback. The exported PDF contains the recommendation, finding ids, and the limitations section; it is a plain print layout.

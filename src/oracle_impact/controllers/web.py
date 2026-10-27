@@ -30,7 +30,7 @@ from oracle_impact.security import (
     session_valid,
     token_matches,
 )
-from oracle_impact.services.analysis_service import AGENTIC, AgenticUnavailable, UnknownModel
+from oracle_impact.services.analysis_service import AGENTIC, DETERMINISTIC, AgenticUnavailable, UnknownModel
 from oracle_impact.services.business_impact import CRITICALITIES
 from oracle_impact.services.decision_service import ACTION_MESSAGES, ERROR_CODES, ActionError, actor
 from oracle_impact.services.email_view import AUDIENCES, DEVELOPER, build_email, build_eml, recipients
@@ -120,8 +120,12 @@ def install_routes(app: FastAPI) -> None:
         return response
 
     @app.get("/", response_class=HTMLResponse)
-    def dashboard(request: Request, error: str = ""):
-        return TEMPLATES.TemplateResponse(request, "dashboard.html", _dashboard_context(request, error, ""))
+    def dashboard(request: Request, error: str = "", investigate: str = ""):
+        return TEMPLATES.TemplateResponse(
+            request,
+            "dashboard.html",
+            _dashboard_context(request, error, "", investigate=bool(investigate)),
+        )
 
     @app.post("/analyses")
     def start_analysis(
@@ -130,28 +134,30 @@ def install_routes(app: FastAPI) -> None:
         packages: str = Form(""),
         model: str = Form(""),
         csrf_token_value: str = Form(""),
+        investigate: str = Form(""),
     ):
         settings = request.app.state.settings
         session = request.cookies.get(SESSION_COOKIE)
         if not csrf_valid(settings.secret_key, session, csrf_token_value):
             return RedirectResponse("/?error=The+form+expired.+Submit+it+again.", status_code=303)
         model = model.strip()
+        mode = AGENTIC if investigate else DETERMINISTIC
         try:
             parsed = parse_package_list(packages)
-            run_id = request.app.state.service.create_run(parsed, model)
-        except (IdentifierError, UnknownModel) as exc:
+            run_id = request.app.state.service.create_run(parsed, model, mode=mode)
+        except (IdentifierError, UnknownModel, AgenticUnavailable) as exc:
             return TEMPLATES.TemplateResponse(
                 request,
                 "dashboard.html",
-                _dashboard_context(request, str(exc), packages, model),
+                _dashboard_context(request, str(exc), packages, model, investigate=bool(investigate)),
                 status_code=400,
             )
         background_tasks.add_task(request.app.state.background, run_id)
         return RedirectResponse(f"/analyses/{run_id}", status_code=303)
 
-    @app.get("/agentic", response_class=HTMLResponse)
-    def agentic_page(request: Request, error: str = ""):
-        return TEMPLATES.TemplateResponse(request, "agentic.html", _agentic_context(request, error, ""))
+    @app.get("/agentic")
+    def agentic_page():
+        return RedirectResponse("/?investigate=1", status_code=303)
 
     @app.post("/agentic/analyses")
     def start_agentic_analysis(
@@ -172,8 +178,8 @@ def install_routes(app: FastAPI) -> None:
         except (IdentifierError, UnknownModel, AgenticUnavailable) as exc:
             return TEMPLATES.TemplateResponse(
                 request,
-                "agentic.html",
-                _agentic_context(request, str(exc), packages, model),
+                "dashboard.html",
+                _dashboard_context(request, str(exc), packages, model, investigate=True),
                 status_code=400,
             )
         background_tasks.add_task(request.app.state.background, run_id)
@@ -352,26 +358,62 @@ def install_routes(app: FastAPI) -> None:
         return JSONResponse({"error": "format must be html, pdf, or json"}, status_code=400)
 
 
-def _dashboard_context(request: Request, error: str, packages: str, model: str = "") -> dict:
+def _dashboard_context(request: Request, error: str, packages: str, model: str = "", investigate: bool = False) -> dict:
     settings = request.app.state.settings
     session = request.cookies.get(SESSION_COOKIE, "")
     models = request.app.state.service.available_models()
     return {
         "settings": settings,
-        "runs": request.app.state.store.list_runs(),
+        "runs": _runs_for_display(request.app.state.store.list_runs()),
         "csrf_token": csrf_token(settings.secret_key, session),
         "error": error,
         "fixture_packages": ["DEMO.PKG_STATUS", "DEMO.PKG_BILLING", "DEMO.PKG_DISPATCH"] if settings.fixture_mode else [],
         "submitted_packages": packages,
         "models": models,
         "selected_model": model if model in models else settings.llm_model,
+        "agentic_available": request.app.state.service.agentic_available(),
+        "investigate": investigate,
     }
 
 
-def _agentic_context(request: Request, error: str, packages: str, model: str = "") -> dict:
-    context = _dashboard_context(request, error, packages, model)
-    context["agentic_available"] = request.app.state.service.agentic_available()
-    return context
+def _runs_for_display(runs: list[dict]) -> list[dict]:
+    """Add a relative/absolute timestamp and short id for the recent-runs table."""
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    result = []
+    for run in runs:
+        created_at = run.get("created_at") or ""
+        requested_ns = run.get("requested_ns") or 0
+        dt = None
+        if created_at:
+            try:
+                dt = datetime.fromisoformat(created_at)
+            except ValueError:
+                dt = None
+        if dt is None and requested_ns:
+            dt = datetime.fromtimestamp(requested_ns / 1e9, tz=timezone.utc)
+        if dt is None:
+            when, title = "—", ""
+        else:
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            seconds = (now - dt).total_seconds()
+            if seconds < 60:
+                when = "just now"
+            elif seconds < 3600:
+                when = f"{int(seconds // 60)}m ago"
+            elif seconds < 86400:
+                when = f"{int(seconds // 3600)}h ago"
+            else:
+                when = f"{int(seconds // 86400)}d ago"
+            title = created_at or dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+        item = dict(run)
+        item["when"] = when
+        item["when_title"] = title
+        item["short_id"] = run["run_id"][:8]
+        result.append(item)
+    return result
 
 
 def _read(request: Request, run_id: str, name: str):

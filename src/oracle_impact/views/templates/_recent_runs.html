@@ -2,16 +2,16 @@
   <h2>Recent runs</h2>
   {% if runs %}
   <div class="table-scroll">
-  <table>
+  <table data-runs-table>
     <thead>
       <tr><th>Run</th><th>Packages</th><th>Mode</th><th>Model</th><th>Status</th><th>Recommendation</th></tr>
     </thead>
     <tbody>
       {% for run in runs %}
-      <tr>
-        <td><a href="/analyses/{{ run.run_id }}">{{ run.run_id }}</a></td>
+      <tr{% if loop.index > 10 %} class="is-extra"{% endif %}>
+        <td><a href="/analyses/{{ run.run_id }}" title="{{ run.run_id }}">{{ run.short_id }}</a></td>
         <td>{{ run.packages | join(", ") }}</td>
-        <td>{{ "Agent-guided" if run.mode == "agentic" else "Hybrid" }}</td>
+        <td>{{ "AI investigated" if run.mode == "agentic" else "Checks only" }}</td>
         <td>{{ run.model or "—" }}</td>
         <td>{{ run.status }}</td>
         <td>{{ run.recommendation or "—" }}</td>
@@ -20,7 +20,10 @@
     </tbody>
   </table>
   </div>
+  {% if runs | length > 10 %}
+  <button type="button" class="btn-ghost" data-show-all-runs hidden>Show all {{ runs | length }} runs</button>
+  {% endif %}
   {% else %}
-  <p class="hint">No analyses yet.</p>
+  <p class="hint">No analyses yet. Try a demo package above.</p>
   {% endif %}
 </section>

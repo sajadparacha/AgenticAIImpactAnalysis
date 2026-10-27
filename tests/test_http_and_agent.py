@@ -147,8 +147,8 @@ def test_finished_runs_open_the_report_and_unfinished_runs_show_progress(tmp_pat
     store.write_status("pending-run", "comparing", detail="Comparing specifications and bodies.")
     pending = client.get("/analyses/pending-run", follow_redirects=False)
     assert pending.status_code == 200
-    assert 'aria-current="page">Progress' in pending.text
-    assert 'href="/agentic">Agent-guided analysis' in pending.text
+    assert 'aria-current="page"><span>Progress</span>' in pending.text
+    assert 'href="/">New analysis' in pending.text
     assert 'data-report-url="/analyses/pending-run/report"' in pending.text
     assert "The report opens here when the analysis finishes." in pending.text
 
@@ -616,28 +616,36 @@ def test_ai_finding_page_renders():
 def test_agentic_page_is_off_and_rejects_runs_while_egress_is_off(tmp_path):
     client = client_for(tmp_path)
     login(client)
-    page = client.get("/agentic")
-    assert page.status_code == 200
-    assert "investigator is off" in page.text
-    assert 'action="/agentic/analyses"' not in page.text
+    page = client.get("/agentic", follow_redirects=False)
+    assert page.status_code == 303
+    assert page.headers["location"] == "/?investigate=1"
     home = client.get("/").text
+    assert 'name="investigate"' in home
+    assert "Let the AI investigate" in home
+    assert "AI investigation is off on this server." in home
+    assert 'action="/analyses"' in home
     mappings = client.get("/mappings").text
     assert 'href="/agentic"' not in home
     assert 'href="/" aria-current="page"' in home
     assert "New analysis" in home
     assert 'href="/mappings" aria-current="page"' not in home
-    assert 'href="/" aria-current="page"' not in page.text
-    assert 'href="/mappings" aria-current="page"' not in page.text
     assert 'href="/mappings" aria-current="page"' in mappings
 
-    rejected = client.post("/agentic/analyses", data={"packages": "DEMO.PKG_STATUS", "csrf_token_value": _csrf(client)})
+    rejected = client.post(
+        "/analyses",
+        data={"packages": "DEMO.PKG_STATUS", "csrf_token_value": _csrf(client), "investigate": "1"},
+    )
     assert rejected.status_code == 400
     assert "LLM egress is disabled" in rejected.text
     assert client.app.state.store.list_runs() == []
 
-    expired = client.post("/agentic/analyses", data={"packages": "DEMO.PKG_STATUS", "csrf_token_value": "nope"}, follow_redirects=False)
+    legacy = client.post("/agentic/analyses", data={"packages": "DEMO.PKG_STATUS", "csrf_token_value": _csrf(client)})
+    assert legacy.status_code == 400
+    assert "LLM egress is disabled" in legacy.text
+
+    expired = client.post("/analyses", data={"packages": "DEMO.PKG_STATUS", "csrf_token_value": "nope"}, follow_redirects=False)
     assert expired.status_code == 303
-    assert expired.headers["location"].startswith("/agentic?error=")
+    assert "error=" in expired.headers["location"]
 
 
 def test_agentic_page_runs_the_investigator_and_shows_its_trace(tmp_path):
@@ -651,11 +659,17 @@ def test_agentic_page_runs_the_investigator_and_shows_its_trace(tmp_path):
     client = TestClient(create_app(configured, investigator=agentic_investigator(provider)))
     login(client)
 
-    page = client.get("/agentic")
-    assert 'action="/agentic/analyses"' in page.text
+    page = client.get("/")
+    assert 'action="/analyses"' in page.text
+    assert "Let the AI investigate" in page.text
+    assert "short summaries" in page.text
+    assert "60 source lines" in page.text
+    redirected = client.get("/agentic", follow_redirects=False)
+    assert redirected.status_code == 303
+    assert redirected.headers["location"] == "/?investigate=1"
     started = client.post(
-        "/agentic/analyses",
-        data={"packages": "DEMO.PKG_STATUS", "csrf_token_value": _csrf(client)},
+        "/analyses",
+        data={"packages": "DEMO.PKG_STATUS", "csrf_token_value": _csrf(client), "investigate": "1"},
         follow_redirects=True,
     )
     assert started.status_code == 200
@@ -679,7 +693,6 @@ def test_agentic_page_runs_the_investigator_and_shows_its_trace(tmp_path):
     assert "Agentic read order, deterministic recommendation" in report
     assert "I read both packages and their callers." in report
     assert "Object status" in report
-    assert "Agent-guided" in client.get("/agentic").text
     assert 'href="/agentic">Agent-guided analysis</a></li>' in report
     assert 'href="/" aria-current="page"' in report
 
