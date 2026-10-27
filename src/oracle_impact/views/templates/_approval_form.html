@@ -1,0 +1,13 @@
+{% import "_report_macros.html" as ui %}
+<form method="post" action="/analyses/{{ view.run_id }}/approval" class="stack-form narrow">
+  {{ ui.form_head(view, 'validation') }}
+  <fieldset>
+    <legend>Decision</legend>
+    <label class="check"><input type="radio" name="decision" value="approved"{% if ready.decision != 'recommended' %} disabled{% endif %}> Approved{% if ready.decision != 'recommended' %} <span class="hint">(only when readiness is Deployment recommended)</span>{% endif %}</label>
+    <label class="check"><input type="radio" name="decision" value="on_hold" checked> On hold</label>
+    <label class="check"><input type="radio" name="decision" value="rejected"> Rejected</label>
+  </fieldset>
+  <label class="field"><span>Reason and conditions</span><textarea name="notes" rows="3" maxlength="2000" required></textarea></label>
+  {{ ui.actor_field('approval') }}
+  <button type="submit" class="btn">Record decision</button>
+</form>

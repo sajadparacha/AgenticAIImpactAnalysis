@@ -1,4 +1,5 @@
 {% import "_report_macros.html" as ui %}
+{% from "_icons.html" import icon %}
 {% set view = view if view is defined else build_report_view(report) %}
 {% set state = state if state is defined else initial_state(view, {}) %}
 {% set print_mode = print_mode is defined and print_mode %}
@@ -6,6 +7,9 @@
 {% set m = view.metrics %}
 {% set d = view.decision %}
 {% set ready = d.readiness %}
+{% set verdict = view.verdict %}
+{% set unresolved = view.unresolved %}
+{% set short_id = view.run_id[:8] %}
 {% set interactive = view.session.interactive and not print_mode %}
 <article class="rv{{ ' is-print' if print_mode else '' }}" data-report data-base="{{ view.base_url }}"
   data-tab="{{ state.tab }}" data-finding="{{ state.finding }}" data-object="{{ state.object }}"
@@ -14,19 +18,18 @@
   <header class="rv-head">
     <nav class="crumbs" aria-label="Breadcrumb">
       <ol>
-        {% if report.run_mode == "agentic" %}<li><a href="/agentic">Agent-guided analysis</a></li>{% else %}<li><a href="/">Hybrid analysis</a></li>{% endif %}
-        <li><a href="/analyses/{{ view.run_id }}/report?tab=audit#phases" title="Run log for {{ view.run_id }}">Run {{ view.run_id[:8] }}</a></li>
+        <li><a href="/">New analysis</a></li>
+        <li><a href="/analyses/{{ view.run_id }}/report?tab=audit#phases" title="Run log for {{ view.run_id }}">Run {{ short_id }}</a></li>
         <li aria-current="page">Impact report</li>
       </ol>
     </nav>
     <div class="rv-head-main">
       <div class="rv-title">
-        <h1>Package impact analysis</h1>
-        <p class="rv-scope">{{ view.header.packages | join(" · ") }}</p>
+        <h1>{{ view.header.packages | join(" · ") }}</h1>
       </div>
       <div class="rv-actions">
         <details class="menu exports">
-          <summary>Export</summary>
+          <summary>{{ icon("download") }} Export</summary>
           <ul>
             <li><a href="/analyses/{{ view.run_id }}/export?format=html">Download HTML</a></li>
             <li><a href="/analyses/{{ view.run_id }}/export?format=pdf">Download PDF</a></li>
@@ -35,35 +38,45 @@
         </details>
         {% if not print_mode %}
         <details class="menu emails">
-          <summary>Prepare email</summary>
+          <summary>{{ icon("mail") }} Prepare email</summary>
           <ul>
             <li><a href="/analyses/{{ view.run_id }}/email?audience=developer">For developers</a></li>
             <li><a href="/analyses/{{ view.run_id }}/email?audience=support">For support</a></li>
           </ul>
         </details>
         {% endif %}
+        <details class="menu help" data-help>
+          <summary>{{ icon("circle-help") }} How to read this report</summary>
+          <div class="help-panel">
+            <p><strong>The verdict.</strong> One readiness decision from the policy: recommended (pending a person's approval), on hold, or can't decide yet. The analyzer never approves.</p>
+            <p><strong>Evidence badges.</strong> <span class="ev ev-confirmed">Confirmed</span> a deterministic check saw the change in source or the dictionary. <span class="ev ev-potential">Possible</span> a hypothesis that has not been confirmed. <span class="ev ev-unknown">Not checkable</span> the checks could not resolve it. <span class="ev ev-ai">AI lead · not verified</span> the investigator's answer; it never changes the verdict.</p>
+            <p><strong>Required test.</strong> The policy says to test or review this before deployment. The result is tracked outside this report, usually in the reply to the email.</p>
+            <p><strong>Counts.</strong> Coverage is a count ("5 of 6 objects"), not a confidence score. A finding is one row; AI notes are not counted as findings.</p>
+          </div>
+        </details>
       </div>
     </div>
-    <dl class="rv-meta">
-      <div><dt>Report</dt><dd><code>{{ view.run_id }}</code></dd></div>
-      <div><dt>Source captured</dt><dd>{{ view.header.created_at }}</dd></div>
-      <div>
-        <dt>Comparison</dt>
-        <dd class="env-flow">
-          <span class="env env-test" title="{{ view.header.proposed.role }}">{{ view.header.proposed.label }}<small>{{ view.header.proposed.database_id }}</small></span>
-          <span aria-hidden="true">→</span><span class="sr-only">compared with</span>
-          <span class="env env-prod" title="{{ view.header.baseline.role }}">{{ view.header.baseline.label }}<small>{{ view.header.baseline.database_id }}</small></span>
-        </dd>
-      </div>
-      <div class="meta-wide"><dt>Analyzer</dt><dd>{{ view.header.analyzer }} · schema {{ view.header.report_version }} · policy {{ d.policy_version }}</dd></div>
-    </dl>
+    <p class="rv-meta-line">
+      <span>Captured {{ view.header.created_at }}</span>
+      <span aria-hidden="true">·</span>
+      <span class="env-flow">
+        <span class="env env-test" title="{{ view.header.proposed.role }}">{{ view.header.proposed.label }}<small>{{ view.header.proposed.database_id }}</small></span>
+        <span aria-hidden="true">→</span>
+        <span class="env env-prod" title="{{ view.header.baseline.role }}">{{ view.header.baseline.label }}<small>{{ view.header.baseline.database_id }}</small></span>
+      </span>
+      <span aria-hidden="true">·</span>
+      <span>Run <code>{{ view.run_id }}</code> <button type="button" class="copy-btn" data-copy="{{ view.run_id }}" aria-label="Copy run ID">{{ icon("copy") }}</button></span>
+      {% if view.fixture %}
+      <span aria-hidden="true">·</span>
+      <span class="tag">Demo data</span>
+      {% endif %}
+      <span aria-hidden="true">·</span>
+      <span class="run-mode">{{ view.header.run_mode_label }}</span>
+    </p>
   </header>
 
   {% if notice is defined and notice and not print_mode %}
   <p class="notice {{ 'notice-warning' if notice.error else 'notice-success' }}" role="status">{{ notice.text }}</p>
-  {% endif %}
-  {% if view.fixture %}
-  <p class="notice notice-info">Fixture mode is on. Counts and findings were computed from the bundled catalog, not from a live Oracle database.</p>
   {% endif %}
   {% if not view.complete %}
   <p class="notice notice-warning">This analysis did not complete (status: {{ view.header.status }}). Results below may be partial.</p>
@@ -72,99 +85,62 @@
   <p class="notice notice-warning">A newer analysis of the same packages exists. <a href="/analyses/{{ view.history.superseded_by }}/report">Open the latest run</a>.</p>
   {% endif %}
 
-  <section class="decision tone-{{ ready.tone }}" id="risk" aria-labelledby="decision-title">
-    <div class="decision-main">
-      <span class="decision-icon" aria-hidden="true"></span>
-      <div>
-        <p class="eyebrow">Deployment readiness {{ ui.kind('policy') }}</p>
-        <h2 id="decision-title">{{ ready.label }}</h2>
-        <p>{{ ready.summary }}</p>
-        {% if ready.indeterminate_reasons %}
-        <ul class="plain-list">{% for reason in ready.indeterminate_reasons %}<li>{{ reason }}</li>{% endfor %}</ul>
-        {% endif %}
-      </div>
-    </div>
-    <ul class="state-chips" aria-label="Decision states">
-      {% for item in d.states %}
-      <li class="state-chip tone-{{ item.tone }}">
-        <span class="state-chip-label">{{ item.label }}</span>
-        <strong>{{ item.value }}</strong>
-        <small>{{ item.note }}</small>
-      </li>
-      {% endfor %}
-    </ul>
-    <div class="decision-basis">
-      <h3>Analyzer recommendation: {{ rec.label }}</h3>
-      <p class="hint">{{ rec.summary }} Readiness adds required tests, drift, coverage, and freshness to it. The AI investigator cannot change either.</p>
-      {% set linked = rec.reasons | selectattr('id') | list %}
-      {% if linked %}
-      <ul>
-        {% for item in linked[:4] %}
-        <li>{{ ui.sev(item.level, item.level_label) }} <a href="{{ ui.finding_href(view, item.id) }}" data-open-finding="{{ item.id }}">{{ item.id }}</a> <span>{{ item.text }}</span></li>
-        {% endfor %}
-      </ul>
-      {% if linked | length > 4 %}<p><a href="{{ view.base_url }}?tab=findings&amp;drivers=1" data-goto-tab="findings" data-filter-drivers>All {{ linked | length }} findings behind this recommendation</a></p>{% endif %}
+  <section class="verdict tone-{{ verdict.tone }}" id="risk" aria-labelledby="decision-title">
+    <span class="verdict-icon" aria-hidden="true">{{ icon({'recommended': 'circle-check', 'on_hold': 'circle-pause', 'indeterminate': 'circle-help'}.get(verdict.decision, 'circle-help')) }}</span>
+    <div class="verdict-main">
+      <h2 id="decision-title">{{ verdict.title }}</h2>
+      <p class="verdict-summary">{{ verdict.summary }}</p>
+      {% if verdict.indeterminate_reasons %}
+      <ul class="plain-list verdict-reasons">{% for reason in verdict.indeterminate_reasons %}<li>{{ reason }}</li>{% endfor %}</ul>
       {% endif %}
-      {% for item in rec.reasons if not item.id %}<p>{{ item.text }}</p>{% endfor %}
+      {% if unresolved.total %}
+      <p class="verdict-unresolved"><a href="{{ view.base_url }}?tab=validation#coverage" data-goto-tab="validation">{{ unresolved.total }} thing{{ 's' if unresolved.total != 1 }} the checks could not resolve{% if unresolved.has_leads %}, including {{ unresolved.ai_leads }} AI lead{{ 's' if unresolved.ai_leads != 1 }}{% endif %}</a></p>
+      {% endif %}
+      <p class="verdict-policy">Policy result: {{ verdict.label }}, policy {{ verdict.policy_version }}</p>
     </div>
-    <dl class="decision-states">
-      <div>
-        <dt>Analyzer recommendation</dt>
-        <dd>{{ rec.label }}<small>Computed from deterministic findings. The AI investigator cannot change it.</small></dd>
-      </div>
-      <div>
-        <dt>Human deployment decision</dt>
-        <dd>{{ view.human_decision.label }}<small>{{ view.human_decision.detail }}</small>{% if view.human_decision.stale %}<small class="warn-text">Readiness has changed since this decision was recorded.</small>{% endif %}</dd>
-      </div>
-    </dl>
+    <div class="verdict-aside">
+      <span class="tag decision-chip tone-{{ verdict.chip_tone }}">{{ verdict.chip }}</span>
+      {% if interactive and view.session.approvals_enabled and view.session.role == 'approver' %}
+      <button type="button" class="button" data-open-approval>{{ icon("plus") }} Record decision</button>
+      {% elif interactive and view.session.approvals_enabled and view.session.role != 'approver' %}
+      <span class="hint">An approver records the decision.</span>
+      {% endif %}
+      {% if not print_mode %}
+      <a class="button verdict-cta" href="{{ view.base_url }}?tab={{ 'findings' if verdict.decision == 'recommended' else 'overview' }}" data-goto-tab="{{ 'findings' if verdict.decision == 'recommended' else 'overview' }}">{{ 'View findings' if verdict.decision == 'recommended' else "See what's blocking" }}</a>
+      {% endif %}
+    </div>
   </section>
 
-  <section class="metrics metrics-primary" aria-label="Primary measures">
-    {% for item in d.primary %}
-    <article class="metric tone-{{ item.tone }}">
-      <p class="metric-label">{{ item.label }}</p>
-      <p class="metric-value">{% if item.value is none %}<span class="metric-na">Not recorded</span>{% else %}{{ item.value }}{% endif %}</p>
-      {% if item.caveat %}<p class="metric-note warn-text"><strong>{{ item.caveat }}</strong></p>{% endif %}
-      <p class="metric-note">{{ item.note }}</p>
-      {% if not print_mode %}<a class="metric-link" href="{{ view.base_url }}?tab={{ item.tab }}" data-goto-tab="{{ item.tab }}">Details<span class="sr-only"> about {{ item.label | lower }}</span></a>{% endif %}
-    </article>
+  {% if interactive and view.session.approvals_enabled and view.session.role == 'approver' %}
+  <dialog class="approval-dialog" data-approval-dialog>
+    <form method="dialog" class="dialog-bar"><span class="eyebrow">Record the deployment decision</span><button class="icon-btn" aria-label="Close">×</button></form>
+    {% include "_approval_form.html" %}
+  </dialog>
+  {% endif %}
+
+  <section class="measures" aria-label="Measures">
+    {% for tile in view.measures %}
+    <a class="measure{% if tile.key == 'findings' and tile.blocker %} has-blocker{% endif %}" href="{{ view.base_url }}?tab={{ tile.tab }}" data-goto-tab="{{ tile.tab }}">
+      <span class="measure-label">{{ tile.label }}{% if tile.key == 'findings' and tile.blocker %} <span class="blocker-dot" aria-label="contains a blocker"></span>{% endif %}</span>
+      <span class="measure-value">{% if tile.value is none %}<span class="metric-na">Not recorded</span>{% else %}{{ tile.value }}{% endif %}</span>
+      {% if tile.key == 'findings' and tile.value %}
+      <svg class="stack-bar measure-stack" viewBox="0 0 300 10" role="img" aria-label="Findings by severity">
+        {% set total = m.findings %}
+        {% set ns = namespace(x=0) %}
+        {% for item in tile.severity if item.count and total %}
+        {% set width = (item.count / total * 300) %}
+        <rect class="seg seg-{{ item.level }}" x="{{ ns.x | round(2) }}" y="0" width="{{ width | round(2) }}" height="10"/>
+        {% set ns.x = ns.x + width %}
+        {% endfor %}
+      </svg>
+      {% elif tile.key == 'objects' %}
+      <span class="measure-note"><span class="plus">+{{ tile.lines_added }}</span> <span class="minus">−{{ tile.lines_removed }}</span> lines</span>
+      {% elif tile.key == 'coverage' %}
+      <span class="measure-note">{{ tile.note }}</span>
+      {% endif %}
+    </a>
     {% endfor %}
   </section>
-  <dl class="metrics-secondary" aria-label="Secondary measures">
-    {% for item in d.secondary %}<div><dt>{{ item.label }}</dt><dd>{{ 'Not recorded' if item.value is none else item.value }}</dd></div>{% endfor %}
-  </dl>
-
-  <details class="change-stats"{% if print_mode %} open{% endif %}>
-  <summary>Change statistics</summary>
-  <section class="metrics" aria-label="Summary">
-    <article class="metric">
-      <p class="metric-label">Objects compared</p>
-      <p class="metric-value">{{ m.objects_compared }}</p>
-      <p class="metric-note">{{ m.objects_changed }} changed{% for item in m.objects_by_type %}{{ ':' if loop.first else ',' }} {{ item.count }} {{ item.label | lower }}{% endfor %}{% if m.objects_formatting %} · {{ m.objects_formatting }} formatting only{% endif %} · {{ m.packages }} package{{ 's' if m.packages != 1 }}</p>
-    </article>
-    <article class="metric">
-      <p class="metric-label">Lines changed</p>
-      <p class="metric-value"><span class="plus">+{{ m.lines_added }}</span> <span class="minus">−{{ m.lines_removed }}</span></p>
-      <p class="metric-note">Across all compared objects</p>
-    </article>
-    <article class="metric">
-      <p class="metric-label">Findings</p>
-      <p class="metric-value">{{ m.findings }}</p>
-      <p class="metric-note sev-inline">{% for item in m.severity if item.count %}{{ ui.sev(item.level, item.count ~ ' ' ~ item.label | lower) }} {% else %}No deterministic findings{% endfor %}</p>
-    </article>
-    <article class="metric">
-      <p class="metric-label">Dependencies</p>
-      <p class="metric-value">{{ m.dependencies }}</p>
-      <p class="metric-note">{{ m.callers }} caller{{ 's' if m.callers != 1 }} · {{ m.referenced }} referenced{% for item in m.dependencies_by_impact if item.label == 'Affected' %} · {{ item.count }} affected{% endfor %}</p>
-    </article>
-    <article class="metric">
-      <p class="metric-label">Evidence</p>
-      <p class="metric-value">{{ (m.evidence | selectattr('status', 'equalto', 'confirmed') | first).count }}<span class="metric-of"> confirmed</span></p>
-      <p class="metric-note">{% for item in m.evidence if item.status != 'confirmed' %}{{ item.count }} {{ 'potential' if item.status == 'potential' else 'not checkable' }}{{ ' · ' if not loop.last }}{% endfor %}</p>
-    </article>
-  </section>
-  </details>
-  <p class="metrics-note hint">Counts are unique findings and unique dependency edges. Each finding is one row in the Findings tab. AI notes are not counted as findings.{% if m.ai_only %} The Findings tab also lists {{ m.ai_only }} AI-only {{ 'item' if m.ai_only == 1 else 'items' }} that the deterministic checks did not raise.{% endif %}{% if not m.reconciled %} This saved report lists {{ m.saved_total }} in its stored severity totals because an earlier version also counted AI notes; this page counts the {{ m.findings }} deterministic findings only.{% endif %}</p>
 
   {% if not print_mode %}
   <nav class="tabs" role="tablist" aria-label="Report views" data-tabs>

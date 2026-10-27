@@ -267,6 +267,8 @@ def _header(report: Report) -> dict:
         "ai_used": report.ai_used,
         "model_name": report.model_name,
         "status": report.status,
+        "run_mode": report.run_mode,
+        "run_mode_label": "AI investigated" if report.run_mode == "agentic" else "Checks only",
     }
 
 

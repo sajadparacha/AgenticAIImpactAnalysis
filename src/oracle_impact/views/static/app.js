@@ -29,6 +29,35 @@ if (showAllRuns) {
   });
 }
 
+document.querySelectorAll("[data-copy]").forEach((button) => {
+  button.addEventListener("click", async () => {
+    const value = button.dataset.copy || "";
+    try {
+      await navigator.clipboard.writeText(value);
+      button.setAttribute("aria-label", "Copied");
+      setTimeout(() => button.setAttribute("aria-label", "Copy run ID"), 1600);
+    } catch {
+      /* Clipboard may be unavailable; the run ID stays visible and selectable. */
+    }
+  });
+});
+
+const approvalDialog = document.querySelector("[data-approval-dialog]");
+document.querySelectorAll("[data-open-approval]").forEach((button) => {
+  button.addEventListener("click", () => {
+    if (approvalDialog && typeof approvalDialog.showModal === "function") {
+      approvalDialog.showModal();
+    } else {
+      window.location.href = button.closest("[data-report]")?.dataset.base + "?tab=validation#approval";
+    }
+  });
+});
+if (approvalDialog) {
+  approvalDialog.addEventListener("click", (event) => {
+    if (event.target === approvalDialog) approvalDialog.close();
+  });
+}
+
 const navToggle = document.querySelector("[data-nav-toggle]");
 const siteNav = document.querySelector("[data-site-nav]");
 if (navToggle && siteNav) {

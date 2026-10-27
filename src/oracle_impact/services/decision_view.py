@@ -12,6 +12,7 @@ from oracle_impact.services.change_classification import TONES as CLASS_TONES
 from oracle_impact.services.readiness import (
     FIX_AND_REANALYZE,
     INDETERMINATE,
+    ON_HOLD,
     RECOMMENDED,
     RESOLUTIONS,
 )
@@ -22,6 +23,11 @@ EVIDENCE_CLASSES = {
     "ai": "AI interpretation",
 }
 APPROVAL_LABELS = {"approved": "Approved", "rejected": "Rejected", "on_hold": "On hold"}
+VERDICT_TITLES = {
+    RECOMMENDED: "Recommended, pending approval",
+    ON_HOLD: "On hold",
+    INDETERMINATE: "Can't decide yet",
+}
 ITEM_STATES = {
     "resolved": ("Resolved", "success"),
     "awaiting_review": ("Awaiting reviewer decision", "warning"),
@@ -63,6 +69,8 @@ def apply_decision(view: dict, report: Report, ctx: dict) -> None:
     latest = approval["latest"]
     view["human_decision"] = _human_decision(latest, approval)
     coverage = _coverage(report)
+    view["verdict"] = _verdict(readiness, view["human_decision"])
+    view["unresolved"] = _unresolved(view, coverage)
     view["decision"] = {
         "readiness": readiness,
         "hold_rows": hold,
@@ -76,6 +84,7 @@ def apply_decision(view: dict, report: Report, ctx: dict) -> None:
     }
     view["classification"] = classification
     view["objects"] = _objects(report, view, classification, labels)
+    view["measures"] = _measures(view, classification, readiness, coverage)
     view["coverage"] = coverage
     view["compilation"] = _compilation(report, labels)
     view["transactions"] = _transactions(report, view)
@@ -215,17 +224,30 @@ def _human_decision(latest: dict | None, approval: dict) -> dict:
             if approval["enabled"]
             else "Approval recording is off because no approver access token is configured. Record the decision in your change-management process."
         )
-        return {"state": "not_recorded", "label": "Not recorded", "detail": detail, "record": None}
+        return {
+            "state": "not_recorded",
+            "label": "Not recorded",
+            "detail": detail,
+            "record": None,
+            "chip": "No decision recorded",
+            "chip_tone": "neutral",
+        }
     who = latest.get("actor") or {}
+    decision = latest.get("decision", "")
+    name = who.get("name", "").strip()
+    chip = f"{APPROVAL_LABELS.get(decision, 'Recorded')} by {name}" if name else APPROVAL_LABELS.get(decision, "Recorded")
+    chip_tone = {"approved": "success", "rejected": "danger", "on_hold": "warning"}.get(decision, "neutral")
     return {
-        "state": latest.get("decision", ""),
-        "label": APPROVAL_LABELS.get(latest.get("decision", ""), "Recorded"),
+        "state": decision,
+        "label": APPROVAL_LABELS.get(decision, "Recorded"),
         "detail": (
             f"Recorded {latest.get('at', '')[:16].replace('T', ' ')} UTC by {who.get('name', 'Not given')} "
             f"(self-declared, {who.get('role', 'unknown')} sign-in). Readiness at the time: {latest.get('readiness', 'not recorded')}."
         ),
         "record": latest,
         "stale": approval["stale"],
+        "chip": chip,
+        "chip_tone": chip_tone,
     }
 
 
@@ -256,6 +278,70 @@ def _coverage(report: Report) -> dict:
         "environments": coverage.environments,
         "completed_at": coverage.completed_at,
     }
+
+
+def _verdict(readiness: dict, human: dict) -> dict:
+    decision = readiness["decision"]
+    return {
+        "decision": decision,
+        "title": VERDICT_TITLES.get(decision, readiness["label"]),
+        "label": readiness["label"],
+        "tone": readiness["tone"],
+        "summary": readiness["summary"],
+        "indeterminate_reasons": readiness["indeterminate_reasons"],
+        "policy_version": readiness["policy_version"],
+        "blocking": decision in {ON_HOLD, INDETERMINATE},
+        "chip": human.get("chip", "No decision recorded"),
+        "chip_tone": human.get("chip_tone", "neutral"),
+    }
+
+
+def _measures(view: dict, classification: dict, readiness: dict, coverage: dict) -> list[dict]:
+    metrics = view["metrics"]
+    changed = sum(1 for item in view["objects"] if item["change_type"] not in {"unchanged", "absent"})
+    affected = sum(1 for dep in view["dependencies"] if dep["impact"] == "Affected")
+    return [
+        {
+            "key": "findings",
+            "label": "Findings",
+            "value": metrics["findings"],
+            "severity": metrics["severity"],
+            "blocker": readiness["open_blockers"] > 0,
+            "tab": "findings",
+        },
+        {
+            "key": "objects",
+            "label": "Changed objects",
+            "value": changed,
+            "lines_added": metrics["lines_added"],
+            "lines_removed": metrics["lines_removed"],
+            "tab": "objects",
+        },
+        {
+            "key": "dependencies",
+            "label": "Affected dependencies",
+            "value": affected,
+            "tab": "dependencies",
+        },
+        {
+            "key": "coverage",
+            "label": "Coverage",
+            "value": f"{coverage['analyzed']} of {coverage['in_scope']} objects" if coverage["recorded"] else None,
+            "note": "in-scope objects fully analyzed" if coverage["recorded"] else "Not recorded in this report version.",
+            "tab": "validation",
+        },
+    ]
+
+
+def _unresolved(view: dict, coverage: dict) -> dict:
+    leads = len(view["ai_leads"])
+    dynamic = len(coverage.get("dynamic_sql", [])) if coverage["recorded"] else 0
+    synonyms = coverage["dependency"]["unresolved"] if coverage["recorded"] else 0
+    gaps = 0
+    if coverage["recorded"]:
+        gaps = coverage["partial"] + coverage["skipped"] + coverage["inaccessible"] + coverage["failed"]
+    total = dynamic + synonyms + gaps + leads
+    return {"total": total, "ai_leads": leads, "has_leads": leads > 0}
 
 
 def _states(report: Report, readiness: dict, coverage: dict, human: dict) -> list[dict]:

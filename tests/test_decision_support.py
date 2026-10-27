@@ -204,9 +204,10 @@ def test_report_tabs_and_filters_render(tmp_path):
     tabs = re.findall(r'data-tab-link="([a-z]+)"', page)
     assert tabs == ["overview", "findings", "objects", "source", "dependencies", "validation", "audit"]
     assert "Deployment on hold" in page and "Why deployment is on hold" in page
-    assert "Production-only drift was not checked." in page
-    for state in ("Analysis completed", "Coverage complete", "Deployment recommended", "Human approval"):
-        assert state in page
+    assert "On hold" in page and "Policy result: Deployment on hold" in page
+    assert "No decision recorded" in page
+    for tile in ("Findings", "Changed objects", "Affected dependencies", "Coverage"):
+        assert tile in page
     for key in ("ec", "blk", "env", "chg"):
         assert f'data-filter="{key}"' in page
     assert 'data-filter="val"' not in page

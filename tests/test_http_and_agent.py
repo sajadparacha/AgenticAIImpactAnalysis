@@ -693,7 +693,7 @@ def test_agentic_page_runs_the_investigator_and_shows_its_trace(tmp_path):
     assert "Agentic read order, deterministic recommendation" in report
     assert "I read both packages and their callers." in report
     assert "Object status" in report
-    assert 'href="/agentic">Agent-guided analysis</a></li>' in report
+    assert 'href="/">New analysis</a></li>' in report
     assert 'href="/" aria-current="page"' in report
 
 
