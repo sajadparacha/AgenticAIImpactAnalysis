@@ -622,12 +622,12 @@ def test_agentic_page_is_off_and_rejects_runs_while_egress_is_off(tmp_path):
     assert 'action="/agentic/analyses"' not in page.text
     home = client.get("/").text
     mappings = client.get("/mappings").text
-    assert 'href="/agentic"' in home
+    assert 'href="/agentic"' not in home
     assert 'href="/" aria-current="page"' in home
-    assert 'href="/agentic" aria-current="page"' not in home
+    assert "New analysis" in home
     assert 'href="/mappings" aria-current="page"' not in home
-    assert 'href="/agentic" aria-current="page"' in page.text
     assert 'href="/" aria-current="page"' not in page.text
+    assert 'href="/mappings" aria-current="page"' not in page.text
     assert 'href="/mappings" aria-current="page"' in mappings
 
     rejected = client.post("/agentic/analyses", data={"packages": "DEMO.PKG_STATUS", "csrf_token_value": _csrf(client)})
@@ -681,7 +681,7 @@ def test_agentic_page_runs_the_investigator_and_shows_its_trace(tmp_path):
     assert "Object status" in report
     assert "Agent-guided" in client.get("/agentic").text
     assert 'href="/agentic">Agent-guided analysis</a></li>' in report
-    assert 'href="/agentic" aria-current="page"' in report
+    assert 'href="/" aria-current="page"' in report
 
 
 def test_live_tools_refuse_reads_outside_the_allowlist():

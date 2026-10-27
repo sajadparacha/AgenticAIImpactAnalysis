@@ -1,9 +1,11 @@
 {% extends "base.html" %}
+{% from "_ui.html" import crumbs %}
 {% block title %}Not found{% endblock %}
 {% block content %}
+{{ crumbs([{"href": "/", "label": "New analysis"}, {"label": "Not found"}]) }}
 <section class="panel">
   <h1>That analysis is not available</h1>
   <p>Run {{ run_id }} does not exist or the report is not ready.</p>
-  <p><a href="/">Return to hybrid analysis</a></p>
+  <p><a href="/">Return to New analysis</a></p>
 </section>
 {% endblock %}

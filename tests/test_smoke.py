@@ -28,6 +28,17 @@ def test_dashboard_requires_sign_in_and_renders(tmp_path: Path):
     assert "Fixture catalog" in page.text
 
 
+def test_templates_have_no_inline_style_or_script():
+    root = Path("src/oracle_impact/views/templates")
+    for path in root.glob("*.html"):
+        text = path.read_text(encoding="utf-8")
+        assert 'style="' not in text, path.name
+        for line in text.splitlines():
+            stripped = line.strip()
+            if "<script" in stripped and "src=" not in stripped:
+                raise AssertionError(f"{path.name} has an inline script")
+
+
 def test_controllers_do_not_contain_sql():
     root = Path("src/oracle_impact/controllers")
     for path in root.glob("*.py"):

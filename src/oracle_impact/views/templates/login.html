@@ -7,12 +7,13 @@
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body class="login-body">
-  <main class="login-card">
+  <a class="skip-link" href="#content">Skip to content</a>
+  <main id="content" class="login-card">
     <p class="eyebrow">Local access</p>
     <h1>Oracle package impact analysis</h1>
     <p class="lede">This development sign-in is a shared access token. It is not enterprise single sign-on.</p>
-    {% if error %}<p class="banner banner-error">{{ error }}</p>{% endif %}
-    <form method="post" action="/login">
+    {% if error %}<p class="notice notice-warning" role="alert">{{ error }}</p>{% endif %}
+    <form method="post" action="/login" class="stack">
       <label for="access_token">Access token</label>
       <input id="access_token" name="access_token" type="password" autocomplete="current-password" required>
       <button type="submit">Continue</button>

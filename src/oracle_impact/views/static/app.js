@@ -1,3 +1,22 @@
+document.documentElement.classList.add("js");
+
+const navToggle = document.querySelector("[data-nav-toggle]");
+const siteNav = document.querySelector("[data-site-nav]");
+if (navToggle && siteNav) {
+  const setNavOpen = (open) => {
+    navToggle.setAttribute("aria-expanded", String(open));
+    siteNav.classList.toggle("is-open", open);
+    navToggle.classList.toggle("is-open", open);
+  };
+  navToggle.addEventListener("click", () => setNavOpen(navToggle.getAttribute("aria-expanded") !== "true"));
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && navToggle.getAttribute("aria-expanded") === "true") {
+      setNavOpen(false);
+      navToggle.focus();
+    }
+  });
+}
+
 const defaultStageOrder = ["queued", "snapshotting", "comparing", "dependencies", "investigating", "validating", "completed"];
 const defaultStageLabels = {
   queued: "Queued",

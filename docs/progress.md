@@ -51,6 +51,8 @@ The Audit tab's "Analysis phases" section now has its own full-width card. Its d
 
 Screenshots `screenshots/decision-*.png` were captured at 1440 px from a local fixture server with seeded records (a baseline, a manifest entry, two mappings, one validation, one approval). Pages were fetched with a session cookie and rendered by headless Chrome without the script, so they show the server-rendered state.
 
+The UX simplification began on branch `feature/ux-simplification` (spec in `docs/redesign/ux-simplification-plan.md`). Phase 1 Foundation is done: design tokens in `app.css`, a local Lucide icon sprite, a `_ui.html` breadcrumb macro, and rebuilt top navigation with a skip link and mobile menu. Result: **254 passed**.
+
 ## Remaining defects
 
 - WeasyPrint was not installed, so the PDF path in this environment is the fpdf2 fallback. The exported PDF contains the recommendation, finding ids, and the limitations section; it is a plain print layout.

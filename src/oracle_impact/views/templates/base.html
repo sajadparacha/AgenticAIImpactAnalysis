@@ -1,3 +1,4 @@
+{% from "_icons.html" import icon %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -7,33 +8,30 @@
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body class="{% block body_class %}{% endblock %}">
+  <a class="skip-link" href="#content">Skip to content</a>
   <header class="mast">
     <div class="mast-inner">
-      <div>
-        <p class="eyebrow">Impact analysis</p>
-        <a class="wordmark" href="/">Oracle package impact analysis</a>
-      </div>
-      <nav class="mast-nav" aria-label="Sections">
+      <a class="wordmark" href="/">Oracle package impact analysis</a>
+      <button type="button" class="menu-toggle" data-nav-toggle aria-expanded="false" aria-controls="site-nav" aria-label="Menu">
+        {{ icon("menu", cls="icon-menu") }}
+        {{ icon("x", cls="icon-close") }}
+      </button>
+      <nav id="site-nav" class="mast-nav" data-site-nav aria-label="Sections">
         {% set path = request.url.path if request is defined else '' %}
         {% set nav = namespace(current='') %}
-        {% if path == '/' %}{% set nav.current = 'hybrid' %}
-        {% elif path.startswith('/agentic') %}{% set nav.current = 'agentic' %}
+        {% if path == '/' or path.startswith('/analyses/') %}{% set nav.current = 'analysis' %}
         {% elif path.startswith('/mappings') %}{% set nav.current = 'mappings' %}
-        {% elif path.startswith('/analyses/') %}
-          {% if (mode is defined and mode == 'agentic') or (report is defined and report and report.run_mode == 'agentic') %}{% set nav.current = 'agentic' %}
-          {% elif (mode is defined and mode) or (report is defined and report) %}{% set nav.current = 'hybrid' %}
-          {% endif %}
+        {% elif path.startswith('/registry') %}{% set nav.current = 'registry' %}
         {% endif %}
-        <a href="/"{% if nav.current == 'hybrid' %} aria-current="page"{% endif %}>Hybrid analysis</a>
-        <a href="/agentic"{% if nav.current == 'agentic' %} aria-current="page"{% endif %}>Agent-guided analysis</a>
-        <a href="/mappings"{% if nav.current == 'mappings' %} aria-current="page"{% endif %}>Business mappings</a>
-        <form method="post" action="/logout">
-          <button type="submit" class="linkish">Sign out</button>
+        <a href="/"{% if nav.current == 'analysis' %} aria-current="page"{% endif %}>{{ icon("plus") }} New analysis</a>
+        <a href="/mappings"{% if nav.current == 'mappings' %} aria-current="page"{% endif %}>{{ icon("building-2") }} Business mappings</a>
+        <form class="nav-form" method="post" action="/logout">
+          <button type="submit" class="linkish">{{ icon("log-out") }} Sign out</button>
         </form>
       </nav>
     </div>
   </header>
-  <main>
+  <main id="content">
     {% block content %}{% endblock %}
   </main>
   <script src="/static/app.js"></script>
