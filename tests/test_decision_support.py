@@ -72,7 +72,7 @@ def test_only_an_approver_can_record_approval_and_only_when_recommended(tmp_path
     latest = _review(approver, status_run)["approval"]["latest"]
     assert latest["decision"] == "approved" and latest["readiness"] == "recommended"
     assert latest["actor"]["role"] == "approver" and latest["actor"]["name"] == "Dana"
-    page = approver.get(f"/analyses/{status_run}/report?tab=audit").text
+    page = approver.get(f"/analyses/{status_run}/report?tab=details").text
     assert "Dana" in page and "self-declared" in page.lower()
 
 
@@ -154,7 +154,7 @@ def test_production_change_after_baseline_is_drift_and_older_run_is_superseded(t
     assert older["readiness"]["decision"] == "indeterminate"
     page = client.get(f"/analyses/{second}/report").text
     assert "Unexpected drift" in page
-    audit = client.get(f"/analyses/{second}/report?tab=audit").text
+    audit = client.get(f"/analyses/{second}/report?tab=details").text
     assert first in audit
 
 
@@ -202,15 +202,15 @@ def test_report_tabs_and_filters_render(tmp_path):
     run_id = _start(client, "DEMO.PKG_BILLING")
     page = client.get(f"/analyses/{run_id}/report").text
     tabs = re.findall(r'data-tab-link="([a-z]+)"', page)
-    assert tabs == ["overview", "findings", "objects", "source", "dependencies", "validation", "audit"]
-    assert "Deployment on hold" in page and "Why deployment is on hold" in page
+    assert tabs == ["overview", "findings", "objects", "dependencies", "details"]
+    assert "Deployment on hold" in page and "What's holding deployment" in page
     assert "On hold" in page and "Policy result: Deployment on hold" in page
     assert "No decision recorded" in page
     for tile in ("Findings", "Changed objects", "Affected dependencies", "Coverage"):
         assert tile in page
-    for key in ("ec", "blk", "env", "chg"):
+    for key in ("ev", "blk", "env", "chg"):
         assert f'data-filter="{key}"' in page
-    assert 'data-filter="val"' not in page
+    assert 'data-filter="val"' not in page and 'data-filter="ec"' not in page
     assert "Validation and review status" not in page
     assert "CMP-DEPENDENT" in page or "PKG_LEGACY" in page
 
@@ -237,10 +237,18 @@ def test_reports_compare_test_and_production_only(tmp_path):
     assert [item["role"] for item in exported["environments"]] == ["source", "baseline"]
     assert {env["environment"] for state in exported["object_states"] for env in state["environments"]} == {"test", "production"}
     assert _review(client, run_id)["readiness"]["decision"] == "recommended"
-    for tab in ("overview", "objects", "source", "dependencies", "validation", "audit"):
+    for tab in ("overview", "objects", "dependencies", "details"):
         page = client.get(f"/analyses/{run_id}/report?tab={tab}")
         assert page.status_code == 200
         assert "AUTUMN" not in page.text and "data-cmp" not in page.text
+    # Legacy tab keys still resolve to the right panel.
+    def _panel_not_hidden(markup: str, key: str) -> bool:
+        attrs = re.search(rf'<section[^>]*data-panel="{key}"[^>]*>', markup).group(0)
+        return " hidden" not in attrs
+
+    assert _panel_not_hidden(client.get(f"/analyses/{run_id}/report?tab=source").text, "objects")
+    assert _panel_not_hidden(client.get(f"/analyses/{run_id}/report?tab=validation").text, "details")
+    assert _panel_not_hidden(client.get(f"/analyses/{run_id}/report?tab=audit").text, "details")
     assert "AUTUMN" not in client.get("/").text
 
 

@@ -44,7 +44,8 @@ CATEGORY_LABELS = {
     "coverage": "Coverage gap",
     "other": "Other",
 }
-TABS = ("overview", "findings", "objects", "source", "dependencies", "validation", "audit")
+TABS = ("overview", "findings", "objects", "dependencies", "details")
+LEGACY_TABS = {"source": "objects", "validation": "details", "audit": "details"}
 STAGES = (
     ("queued", "Queued"),
     ("snapshotting", "Source snapshot"),
@@ -224,8 +225,9 @@ def initial_state(view: dict, params) -> dict:
     keys = [diff["key"] for diff in view["diffs"]]
     if obj not in keys:
         obj = ""
+    tab = LEGACY_TABS.get(tab, tab)
     if tab not in TABS:
-        tab = "findings" if finding else "source" if obj else "overview"
+        tab = "findings" if finding else "objects" if obj else "overview"
     if not obj:
         changed = [diff["key"] for diff in view["diffs"] if diff["state"] != "unchanged"]
         obj = (changed or keys or [""])[0]

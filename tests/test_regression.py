@@ -1180,7 +1180,7 @@ def test_blind_spot_leads_stay_potential_and_do_not_change_the_recommendation(tm
     assert "AI-BS-1" not in table_html
     card = page.split('id="ai-leads"', 1)[1].split('id="limitations"', 1)[0]
     assert "AI-BS-1" in card and "AI-BS-2" in card
-    assert "Potential · AI, not verified" in card
+    assert "AI lead · not verified" in card
     assert "points to REF.FX_RATES_T" in card
 
 

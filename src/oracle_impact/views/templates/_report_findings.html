@@ -1,8 +1,27 @@
 {% import "_report_macros.html" as ui %}
+{% from "_icons.html" import icon %}
 <section class="rv-panel" id="changes" {{ ui.panel_attrs(state, 'findings', print_mode) }}>
   <div class="panel-head">
-    <h2>Findings</h2>
-    <p class="hint">One row per finding, most severe first. Severity and evidence status come from the deterministic checks. A purple AI note explains a finding; it does not change its severity or the recommendation.</p>
+    <h2>Findings <span class="count-chip">{{ view.counts.findings }}</span></h2>
+    <p class="hint">One row per finding, most severe first. Severity and evidence come from the deterministic checks. An AI note explains a finding; it never changes its severity or the recommendation.</p>
+    {% set total = m.findings %}
+    {% if total %}
+    <div class="stack-legend" role="img" aria-label="Findings by severity">
+      <svg class="stack-bar" viewBox="0 0 300 10" aria-hidden="true">
+        {% set ns = namespace(x=0) %}
+        {% for item in m.severity if item.count %}
+        {% set width = (item.count / total * 300) %}
+        <rect class="seg seg-{{ item.level }}" x="{{ ns.x | round(2) }}" y="0" width="{{ width | round(2) }}" height="10"/>
+        {% set ns.x = ns.x + width %}
+        {% endfor %}
+      </svg>
+      <ul class="legend">
+        {% for item in m.severity %}
+        <li class="{{ 'is-zero' if not item.count }}"><span class="dot dot-{{ item.level }}" aria-hidden="true"></span>{{ item.label }}<span>{{ item.count }}</span></li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
   </div>
   {% if view.rows %}
   {% if not print_mode %}
@@ -11,55 +30,55 @@
     <label class="field"><span>Severity</span>
       <select data-filter="sev"><option value="">All</option>{% for item in view.filters.severity %}<option value="{{ item.value }}">{{ item.label }}</option>{% endfor %}</select>
     </label>
-    <label class="field"><span>Object type</span>
-      <select data-filter="type"><option value="">All</option>{% for item in view.filters.object_type %}<option value="{{ item }}">{{ item | lower }}</option>{% endfor %}</select>
-    </label>
-    <label class="field"><span>Category</span>
-      <select data-filter="cat"><option value="">All</option>{% for item in view.filters.category %}<option value="{{ item.value }}">{{ item.label }}</option>{% endfor %}</select>
-    </label>
-    <label class="field"><span>Source</span>
-      <select data-filter="src"><option value="">All</option>{% for item in view.filters.source %}<option value="{{ item.value }}">{{ item.label }}</option>{% endfor %}</select>
-    </label>
-    <label class="field"><span>Evidence</span>
-      <select data-filter="ev"><option value="">All</option>{% for item in view.filters.evidence %}<option value="{{ item.value }}">{{ item.label }}</option>{% endfor %}</select>
-    </label>
-    <label class="field"><span>Evidence class</span>
-      <select data-filter="ec"><option value="">All</option>{% for item in view.filters.evidence_class %}<option value="{{ item.value }}">{{ item.label }}</option>{% endfor %}</select>
-    </label>
     <label class="field"><span>Deployment</span>
       <select data-filter="blk"><option value="">All</option>{% for item in view.filters.blocking %}<option value="{{ item.value }}">{{ item.label }}</option>{% endfor %}</select>
     </label>
-    <label class="field"><span>Environment</span>
-      <select data-filter="env"><option value="">All</option>{% for item in view.filters.environment %}<option value="{{ item.value }}">{{ view.environment_labels.get(item.value, item.label) }}</option>{% endfor %}</select>
-    </label>
-    <label class="field"><span>Change type</span>
-      <select data-filter="chg"><option value="">All</option>{% for item in view.filters.change_type %}<option value="{{ item.value }}">{{ item.label }}</option>{% endfor %}</select>
-    </label>
-    <label class="check"><input type="checkbox" data-filter="drivers"> Behind the recommendation</label>
+    <label class="check"><input type="checkbox" data-filter="drivers"> Behind the verdict</label>
+    <details class="disclosure more-filters" data-more-filters>
+      <summary>{{ icon("sliders-horizontal") }} More filters <span class="count-chip" data-more-filters-count hidden></span></summary>
+      <div class="toolbar-sub">
+        <label class="field"><span>Object type</span>
+          <select data-filter="type"><option value="">All</option>{% for item in view.filters.object_type %}<option value="{{ item }}">{{ item | lower }}</option>{% endfor %}</select>
+        </label>
+        <label class="field"><span>Category</span>
+          <select data-filter="cat"><option value="">All</option>{% for item in view.filters.category %}<option value="{{ item.value }}">{{ item.label }}</option>{% endfor %}</select>
+        </label>
+        <label class="field"><span>Evidence</span>
+          <select data-filter="ev"><option value="">All</option>{% for item in view.filters.evidence %}<option value="{{ item.value }}">{{ item.label }}</option>{% endfor %}</select>
+        </label>
+        <label class="field"><span>Environment</span>
+          <select data-filter="env"><option value="">All</option>{% for item in view.filters.environment %}<option value="{{ item.value }}">{{ view.environment_labels.get(item.value, item.label) }}</option>{% endfor %}</select>
+        </label>
+        <label class="field"><span>Change type</span>
+          <select data-filter="chg"><option value="">All</option>{% for item in view.filters.change_type %}<option value="{{ item.value }}">{{ item.label }}</option>{% endfor %}</select>
+        </label>
+      </div>
+    </details>
+    <div class="filter-chips" data-filter-chips aria-live="polite"></div>
     <button type="button" class="btn-ghost" data-filter-reset>Reset filters</button>
   </div>
   <p class="result-count" data-result-count aria-live="polite">Showing {{ view.rows | length }} of {{ view.rows | length }} findings</p>
   {% endif %}
   <div class="table-scroll">
     <table class="data-table findings-table" data-findings-table>
-      <caption class="sr-only">Findings. Use the Details button to open evidence, the AI interpretation, and next steps.</caption>
+      <caption class="sr-only">Findings. Select a row to open evidence, the AI interpretation, and next steps.</caption>
       <thead>
         <tr>
           <th scope="col" aria-sort="ascending"><button type="button" class="sort" data-sort="rank">Severity</button></th>
           <th scope="col"><button type="button" class="sort" data-sort="id">Finding</button></th>
-          <th scope="col"><button type="button" class="sort" data-sort="object">Affected object</button></th>
-          <th scope="col">Source</th>
-          <th scope="col"><button type="button" class="sort" data-sort="evidence">Evidence</button></th>
+          <th scope="col"><button type="button" class="sort" data-sort="object">Object</button></th>
+          <th scope="col">Evidence</th>
           <th scope="col">Deployment</th>
-          <th scope="col"><span class="sr-only">Details</span></th>
+          <th scope="col"><span class="sr-only">Open</span></th>
         </tr>
       </thead>
       <tbody>
         {% for row in view.rows %}
-        <tr id="{{ row.dom_id }}" class="frow lvl-{{ row.level }}" data-row data-id="{{ row.id }}" data-rank="{{ loop.index0 }}"
-            data-sev="{{ row.level }}" data-type="{{ row.object_type }}" data-cat="{{ row.category }}" data-src="{{ row.source }}"
+        <tr id="{{ row.dom_id }}" class="frow lvl-{{ row.level }} clickable" data-row data-id="{{ row.id }}" data-rank="{{ loop.index0 }}"
+            data-open-finding="{{ row.id }}" tabindex="0"
+            data-sev="{{ row.level }}" data-type="{{ row.object_type }}" data-cat="{{ row.category }}"
             data-ev="{{ row.evidence_status }}" data-drivers="{{ '1' if row.driver else '' }}" data-object="{{ row.object }}" data-search="{{ row.search }}"
-            data-ec="{{ row.evidence_class }}" data-blk="{{ row.blocking or 'none' }}" data-env="{{ row.environment }}" data-chg="{{ row.change_type }}">
+            data-blk="{{ row.blocking or 'none' }}" data-env="{{ row.environment }}" data-chg="{{ row.change_type }}">
           <td>{{ ui.sev(row.level, row.level_label) }}</td>
           <td>
             <span class="row-title">{{ row.headline }}</span>
@@ -73,10 +92,9 @@
             <span class="row-meta">{{ row.object_type | lower }}{% if row.where %} · {{ row.where }}{% endif %}</span>
             {% if row.affected_object and row.affected_object != row.object %}<span class="row-meta">Affects <code>{{ row.affected_object }}</code></span>{% endif %}
           </td>
-          <td>{{ ui.source(row.source, row.source_label) }}<span class="row-meta">{{ row.evidence_class_label }}</span></td>
-          <td>{{ ui.evidence(row.evidence_status, row.evidence_label) }}</td>
-          <td>{% if row.policy %}{{ ui.tag(row.blocking_label, 'danger' if row.blocking == 'blocker' else 'warning') }}<span class="row-meta">{{ row.policy_state_label }} · {{ row.policy.item.rule_id }}</span>{% else %}<span class="hint">Does not block</span>{% endif %}</td>
-          <td><a class="btn-sm" href="{{ ui.finding_href(view, row.id) }}" data-open-finding="{{ row.id }}" aria-haspopup="dialog">Details<span class="sr-only"> for {{ row.id }}</span></a></td>
+          <td>{{ ui.evidence(row.evidence_badge_key, row.evidence_badge) }}</td>
+          <td>{% if row.policy %}{{ ui.tag(row.blocking_label, 'danger' if row.blocking == 'blocker' else 'warning') }}<span class="row-meta">{{ row.policy_state_label }}</span>{% elif row.source == 'ai' %}<span class="hint">Does not block</span>{% else %}<span class="hint">Does not block</span>{% endif %}</td>
+          <td class="row-chevron">{{ icon("chevron-right") }}</td>
         </tr>
         {% endfor %}
       </tbody>

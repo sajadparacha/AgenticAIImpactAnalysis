@@ -35,12 +35,12 @@
       <div><dt>Captured from</dt><dd>{{ row.environment_label }}</dd></div>
       {% if f.changed_lines_test %}
       <div><dt>Lines in Test</dt><dd>
-        {% for line in f.changed_lines_test %}{% if row.diff_link %}<a href="{{ view.base_url }}?tab=source&amp;object={{ row.diff_link.key | urlencode }}&amp;line={{ line }}&amp;side=t" data-goto-line="{{ row.diff_link.key }}|t|{{ line }}">{{ line }}</a>{% else %}{{ line }}{% endif %}{{ ', ' if not loop.last }}{% endfor %}
+        {% for line in f.changed_lines_test %}{% if row.diff_link %}<a href="{{ view.base_url }}?tab=objects&amp;object={{ row.diff_link.key | urlencode }}&amp;line={{ line }}&amp;side=t" data-goto-line="{{ row.diff_link.key }}|t|{{ line }}">{{ line }}</a>{% else %}{{ line }}{% endif %}{{ ', ' if not loop.last }}{% endfor %}
       </dd></div>
       {% endif %}
       {% if f.corresponding_lines_prod %}
       <div><dt>Lines in Production</dt><dd>
-        {% for line in f.corresponding_lines_prod %}{% if row.diff_link %}<a href="{{ view.base_url }}?tab=source&amp;object={{ row.diff_link.key | urlencode }}&amp;line={{ line }}&amp;side=p" data-goto-line="{{ row.diff_link.key }}|p|{{ line }}">{{ line }}</a>{% else %}{{ line }}{% endif %}{{ ', ' if not loop.last }}{% endfor %}
+        {% for line in f.corresponding_lines_prod %}{% if row.diff_link %}<a href="{{ view.base_url }}?tab=objects&amp;object={{ row.diff_link.key | urlencode }}&amp;line={{ line }}&amp;side=p" data-goto-line="{{ row.diff_link.key }}|p|{{ line }}">{{ line }}</a>{% else %}{{ line }}{% endif %}{{ ', ' if not loop.last }}{% endfor %}
       </dd></div>
       {% endif %}
       {% if row.affected_object %}<div><dt>Affected object</dt><dd><code>{{ row.affected_object }}</code></dd></div>{% endif %}

@@ -100,6 +100,43 @@ def apply_decision(view: dict, report: Report, ctx: dict) -> None:
     view["environment_labels"] = labels
     view["audit"]["metadata"].append({"label": "Blocking policy", "value": readiness["policy_version"]})
     view["counts"]["objects"] = sum(1 for item in view["objects"] if item["change_type"] not in {"unchanged", "absent"})
+    view["next_steps"] = _merged_next_steps(view)
+
+
+def _merged_next_steps(view: dict) -> list[dict]:
+    """One de-duplicated, ordered list for the Summary tab, merged from the policy
+    next actions, the recorded required actions, and the suggested checks.
+
+    Attribution is kept as a badge so the AI's unverified suggestions stay distinct
+    from the deterministic ("Confirmed") guidance.
+    """
+    steps: list[dict] = []
+    seen: set[str] = set()
+
+    def add(step: dict) -> None:
+        key = step["text"].strip().lower()
+        if key in seen:
+            return
+        seen.add(key)
+        steps.append(step)
+
+    for action in view["decision"]["next_actions"]:
+        add({**action, "badge": "Confirmed", "badge_key": "confirmed"})
+    for action in view["required_actions"]:
+        add({"text": action, "kind": "required", "tab": "details", "badge": "Confirmed", "badge_key": "confirmed"})
+    for check in view["suggested_checks"]:
+        add(
+            {
+                "text": check["text"],
+                "kind": "suggested",
+                "finding_id": check["finding_id"],
+                "level": check["level"],
+                "level_label": check["level_label"],
+                "badge": "AI lead · not verified" if check["from_ai"] else "Confirmed",
+                "badge_key": "ai" if check["from_ai"] else "confirmed",
+            }
+        )
+    return steps
 
 
 def _env_labels(report: Report) -> dict[str, str]:
@@ -141,6 +178,16 @@ def _decorate_row(row: dict, items: dict, by_object: dict, labels: dict) -> None
             "attributes": finding.attributes or {},
         }
     )
+    if row["source"] == "ai":
+        badge, badge_key = "AI lead · not verified", "ai"
+    elif row["evidence_status"] == "confirmed":
+        badge, badge_key = "Confirmed", "confirmed"
+    elif row["evidence_status"] == "potential":
+        badge, badge_key = "Possible", "potential"
+    else:
+        badge, badge_key = "Not checkable", "unknown"
+    row["evidence_badge"] = badge
+    row["evidence_badge_key"] = badge_key
     row["search"] = f"{row['search']} {finding.rule_id.lower()} {finding.fingerprint.lower()}".strip()
 
 
@@ -328,7 +375,7 @@ def _measures(view: dict, classification: dict, readiness: dict, coverage: dict)
             "label": "Coverage",
             "value": f"{coverage['analyzed']} of {coverage['in_scope']} objects" if coverage["recorded"] else None,
             "note": "in-scope objects fully analyzed" if coverage["recorded"] else "Not recorded in this report version.",
-            "tab": "validation",
+            "tab": "details",
         },
     ]
 
@@ -410,14 +457,14 @@ def _primary(classification: dict, readiness: dict, coverage: dict) -> list[dict
             "label": "Blocking issues",
             "value": readiness["open_blockers"],
             "note": f"{len(readiness['blockers'])} raised by policy, {len(readiness['blockers']) - readiness['open_blockers']} resolved.",
-            "tab": "validation",
+            "tab": "details",
             "tone": "danger" if readiness["open_blockers"] else "success",
         },
         {
             "label": "Analysis coverage",
             "value": f"{coverage['analyzed']} of {coverage['in_scope']}" if coverage["recorded"] else None,
             "note": f"In-scope objects fully analyzed ({coverage['denominator']})." if coverage["recorded"] else "Not recorded in this report version.",
-            "tab": "validation",
+            "tab": "details",
             "tone": "success" if coverage.get("complete") else "warning",
         },
     ]
@@ -444,11 +491,11 @@ def _secondary(report: Report, classification: dict, readiness: dict, coverage: 
 def _next_actions(view: dict, readiness: dict, classification: dict, approval: dict, coverage: dict) -> list[dict]:
     actions = []
     for reason in readiness["indeterminate_reasons"]:
-        actions.append({"text": reason, "tab": "audit", "kind": "indeterminate"})
+        actions.append({"text": reason, "tab": "overview", "kind": "indeterminate"})
     fix = [entry for entry in readiness["blockers"] if entry["state"] != "resolved" and entry["item"].resolution == FIX_AND_REANALYZE]
     if fix:
         actions.append(
-            {"text": f"Fix {len(fix)} blocking finding{'s' if len(fix) != 1 else ''} in Test, then run a new analysis.", "tab": "validation", "kind": "blocker"}
+            {"text": f"Fix {len(fix)} blocking finding{'s' if len(fix) != 1 else ''} in Test, then run a new analysis.", "tab": "details", "kind": "blocker"}
         )
     pending = [
         entry
@@ -459,7 +506,7 @@ def _next_actions(view: dict, readiness: dict, classification: dict, approval: d
         actions.append(
             {
                 "text": f"Test {len(pending)} finding{'s' if len(pending) != 1 else ''} before deployment. Results are not recorded in this report.",
-                "tab": "validation",
+                "tab": "details",
                 "kind": "validation",
             }
         )
@@ -479,7 +526,7 @@ def _next_actions(view: dict, readiness: dict, classification: dict, approval: d
     if classification["recorded"] and classification["baseline_state"] in {"unavailable", "partial", "outdated"}:
         actions.append({"text": classification["baseline_note"], "tab": "objects", "kind": "baseline"})
     if readiness["decision"] == RECOMMENDED and approval["latest"] is None:
-        actions.append({"text": "Record the human deployment decision.", "tab": "validation", "kind": "approval"})
+        actions.append({"text": "Record the human deployment decision.", "tab": "overview", "kind": "approval"})
     return actions
 
 

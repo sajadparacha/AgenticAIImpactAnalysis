@@ -68,7 +68,7 @@ def test_recommendation_comes_from_policy_and_human_decision_is_not_recorded(tmp
     assert view["decision"]["readiness"]["open_blockers"] >= 1
     assert view["approval"]["latest"] is None
     assert 'name="decision"' not in page
-    assert "No one has approved or rejected this change" in page
+    assert "Approval recording is off because no approver access token is configured." in page
     assert not re.search(r"(deployment|change) (approved|rejected)|approved by", page, re.IGNORECASE)
 
 
@@ -99,7 +99,10 @@ def test_initial_state_rejects_unknown_deep_link_values(tmp_path):
     assert initial_state(view, {"finding": finding_id})["tab"] == "findings"
     key = view["diffs"][-1]["key"]
     deep = initial_state(view, {"object": key, "line": "7", "side": "p", "mode": "support"})
-    assert deep == {"tab": "source", "finding": "", "object": key, "line": 7, "side": "p"}
+    assert deep == {"tab": "objects", "finding": "", "object": key, "line": 7, "side": "p"}
+    # Legacy tab keys are mapped before validation.
+    for legacy, resolved in (("source", "objects"), ("validation", "details"), ("audit", "details")):
+        assert initial_state(view, {"tab": legacy})["tab"] == resolved
 
 
 def test_source_diff_collapses_distant_context_and_links_findings(tmp_path):
@@ -194,7 +197,7 @@ def test_format_timestamp_reports_missing_values():
 def test_print_export_shows_every_panel_and_finding_detail(tmp_path):
     report = _reviewed_report(tmp_path)
     page = _render(report, print_mode=True)
-    for panel in ("overview", "findings", "source", "dependencies", "validation", "audit"):
+    for panel in ("overview", "findings", "objects", "dependencies", "details"):
         attrs = re.search(rf'<section[^>]*data-panel="{panel}"[^>]*>', page).group(0)
         assert " hidden" not in attrs
     assert 'role="tablist"' not in page and "data-drawer" not in page
@@ -220,8 +223,11 @@ def test_report_page_deep_links_open_the_requested_panel_and_finding(tmp_path):
 
     key = exported["diffs"][0]["owner"] + "." + exported["diffs"][0]["name"] + ":" + exported["diffs"][0]["object_type"]
     source = client.get(f"/analyses/{run_id}/report", params={"tab": "source", "object": key, "line": "2", "mode": "support"}).text
-    assert not _panel_hidden(source, "source") and _panel_hidden(source, "findings")
+    assert not _panel_hidden(source, "objects") and _panel_hidden(source, "findings")
     assert f'data-object="{key}"' in source and 'data-line="2"' in source and "data-mode=" not in source
+
+    direct = client.get(f"/analyses/{run_id}/report", params={"tab": "objects", "object": key}).text
+    assert not _panel_hidden(direct, "objects") and _panel_hidden(direct, "findings")
 
     fallback = client.get(f"/analyses/{run_id}/report?tab=<script>&finding=x").text
     assert not _panel_hidden(fallback, "overview") and "<script>" not in fallback.split('id="risk"', 1)[0]
@@ -236,7 +242,9 @@ def test_report_page_keeps_exports_and_legacy_anchors_without_a_presentation_swi
     for fmt in ("html", "pdf", "json"):
         assert f"/analyses/{run_id}/export?format={fmt}" in page
     assert "data-mode-set" not in page and "mode-switch" not in page
-    assert "Plain-language risk summary" in page
+    assert 'id="risk"' in page and "Nothing is holding this deployment" in page
+    assert "Recommended, pending approval" in page and "Human approval is still required." in page
+    assert "Ready to deploy" not in page and "Not yet approved" not in page
     for anchor in ("changes", "comparison", "dependencies", "ai", "risk", "limitations"):
         assert f'id="{anchor}"' in page
     html = client.get(f"/analyses/{run_id}/export?format=html")

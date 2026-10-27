@@ -1,0 +1,443 @@
+{% import "_report_macros.html" as ui %}
+{% from "_icons.html" import icon %}
+{% set audit = view.audit %}
+{% set c = view.coverage %}
+{% set ai = view.ai %}
+{% set perf = view.performance %}
+<section class="rv-panel" id="details" {{ ui.panel_attrs(state, 'details', print_mode) }}>
+  <div class="panel-head">
+    <h2>Details</h2>
+    <p class="hint">The evidence behind the verdict: the policy result, the analyzer recommendation, coverage and blind spots, and how this report was produced. The verdict itself stays on the Summary tab.</p>
+  </div>
+
+  <details class="card disclosure detail-section" id="verdict-basis"{% if print_mode or ready.decision != 'recommended' %} open{% endif %}>
+    <summary><span class="section-title">Verdict basis</span><span class="section-summary">Policy result: {{ ready.label }}, policy {{ d.policy_version }}</span></summary>
+    <div class="section-body">
+      <div class="two-up">
+        <div>
+          <p class="eyebrow">Deployment readiness {{ ui.kind('policy') }}</p>
+          <p class="state-value">{{ ready.label }}</p>
+          <p>{{ ready.summary }}</p>
+          <p class="hint">Policy {{ d.policy_version }}{% if d.policy_computed_now %}, applied now because this report was saved before blocking rules existed{% endif %}. It is a recommendation, not an approval.</p>
+        </div>
+        <div>
+          <p class="eyebrow">Analyzer recommendation {{ ui.kind('policy') }}</p>
+          <p class="state-value">{{ rec.label }}</p>
+          <p>{{ rec.summary }}</p>
+          {% if rec.reasons %}
+          <ul class="plain-list">{% for reason in rec.reasons %}<li>{{ reason.text }}</li>{% endfor %}</ul>
+          {% endif %}
+          <p class="hint">Computed by the recommendation policy from deterministic findings. The AI investigator cannot upgrade it.</p>
+        </div>
+      </div>
+      <div class="card">
+        <p class="eyebrow">Human deployment decision</p>
+        <p class="state-value">{{ view.human_decision.label }}</p>
+        <p>{{ view.human_decision.detail }}</p>
+        {% if view.human_decision.stale %}<p class="notice notice-warning">Readiness has changed since this decision was recorded. Review it again.</p>{% endif %}
+        {% if view.approval.history %}
+        <h4>Approval history</h4>
+        <ol class="event-list">
+          {% for record in view.approval.history | reverse %}
+          <li><strong>{{ view.approval.labels.get(record.decision, record.decision) }}</strong> · {{ record.at[:19] | replace('T', ' ') }} UTC · {{ record.actor.name }} (self-declared) · readiness then: {{ record.readiness }}, policy {{ record.policy_version }}<span class="row-meta">{{ record.notes }}</span></li>
+          {% endfor %}
+        </ol>
+        {% endif %}
+      </div>
+      {% if interactive %}
+      <div class="card" id="approval">
+        <div class="card-head"><h3>Record the deployment decision</h3></div>
+        {% if not view.session.approvals_enabled %}
+        <p class="notice notice-info">Approval recording is off because no approver access token is configured (<code>OIA_APPROVER_ACCESS_TOKEN</code>). Record the decision in your change-management process.</p>
+        {% elif view.session.role != 'approver' %}
+        <p class="hint">Only an approver session can record the deployment decision. Sign in with the approver access token.</p>
+        {% else %}
+        {% include "_approval_form.html" %}
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+  </details>
+
+  <details class="card disclosure detail-section" id="policy-items"{% if print_mode %} open{% endif %}>
+    <summary><span class="section-title">Blocking rules and required validations</span><span class="section-summary">{{ view.review['items'] | length }} policy item{{ 's' if view.review['items'] | length != 1 }}</span></summary>
+    <div class="section-body">
+      {{ ui.kind('policy') }}
+      {% if view.review['items'] %}
+      <div class="table-scroll">
+        <table class="data-table compact">
+          <thead><tr><th scope="col">Rule</th><th scope="col">Finding</th><th scope="col">Object</th><th scope="col">How it clears</th><th scope="col">Status</th></tr></thead>
+          <tbody>
+            {% for entry in view.review['items'] %}
+            <tr>
+              <td>{{ ui.tag('Blocker' if entry.kind == 'blocker' else 'Validation', 'danger' if entry.kind == 'blocker' else 'warning') }}<span class="row-meta"><code>{{ entry.item.rule_id }}</code> {{ entry.item.title }}</span></td>
+              <td><a href="{{ ui.finding_href(view, entry.item.finding_id) }}" data-open-finding="{{ entry.item.finding_id }}">{{ entry.item.finding_id }}</a>{% if entry.row %}<span class="row-meta">{{ entry.row.headline }}</span>{% endif %}</td>
+              <td>{% if entry.row and entry.row.object %}<code class="obj">{{ entry.row.object }}</code>{% endif %}</td>
+              <td>{{ entry.resolution }}</td>
+              <td>{{ ui.tag(entry.state_label, entry.tone) }}<span class="row-meta">{{ entry.reason }}</span></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="hint">These stay listed for the life of this report. A fix-and-reanalyze item clears only when a new analysis no longer raises it.</p>
+      {% else %}
+      <p class="empty">No rule in policy {{ d.policy_version }} applies to these findings.</p>
+      {% endif %}
+    </div>
+  </details>
+
+  <details class="card disclosure detail-section"{% if print_mode %} open{% endif %}>
+    <summary><span class="section-title">Recommended tests</span><span class="section-summary">{{ view.tests | length }} finding{{ 's' if view.tests | length != 1 }} with proposed steps</span></summary>
+    <div class="section-body">
+      <p class="notice notice-info">These tests are recommendations for the people who receive this report. The application does not run them and does not record the results.</p>
+      {% if view.tests %}
+      {% macro test_group(group) %}
+        <li>
+          <p class="check-head">{{ ui.sev(group.level, group.level_label) }} <a href="{{ ui.finding_href(view, group.finding_id) }}" data-open-finding="{{ group.finding_id }}">{{ group.finding_id }}</a> <span>{{ group.headline }}</span></p>
+          <ul class="step-list-plain">
+            {% for step in group.steps %}<li><span class="attrib{{ ' attrib-ai' if step.from_ai }}">{{ step.attribution }}</span> {{ step.text }}</li>{% endfor %}
+            {% if group.snippets %}<li><a href="/analyses/{{ view.run_id }}/findings/{{ group.finding_id }}">{{ group.snippets }} SQL test script{{ 's' if group.snippets != 1 }} to run in Test</a></li>{% endif %}
+          </ul>
+        </li>
+      {% endmacro %}
+      <ul class="test-groups">
+        {% for group in view.tests[:6] %}{{ test_group(group) }}{% endfor %}
+      </ul>
+      {% if view.tests | length > 6 %}
+      <details class="disclosure"{% if print_mode %} open{% endif %}>
+        <summary>Tests for {{ view.tests | length - 6 }} more finding{{ 's' if view.tests | length - 6 != 1 }}</summary>
+        <ul class="test-groups">
+          {% for group in view.tests[6:] %}{{ test_group(group) }}{% endfor %}
+        </ul>
+      </details>
+      {% endif %}
+      {% else %}
+      <p class="empty">No tests were proposed.</p>
+      {% endif %}
+    </div>
+  </details>
+
+  <details class="card disclosure detail-section" id="coverage"{% if print_mode %} open{% endif %}>
+    <summary><span class="section-title">Coverage and blind spots</span><span class="section-summary">{% if c.recorded %}{{ c.analyzed }} of {{ c.in_scope }} objects fully analyzed{% else %}Not recorded{% endif %}</span></summary>
+    <div class="section-body">
+      {{ ui.kind('det') }}
+      {% if c.recorded %}
+      <p><strong>{{ c.analyzed }} of {{ c.in_scope }}</strong> in-scope objects fully analyzed{% if c.percent is not none %} ({{ c.percent }}%){% endif %}. Denominator: {{ c.denominator }}. Completed {{ c.completed_at[:19] | replace('T', ' ') }} UTC in {{ c.environments | map('upper') | join(', ') }}.</p>
+      <div class="table-scroll">
+        <table class="data-table compact">
+          <thead><tr><th scope="col">Object</th><th scope="col">State</th><th scope="col">Why</th></tr></thead>
+          <tbody>
+            {% for item in c['items'] %}
+            <tr>
+              <td><code class="obj">{{ item.qualified }}</code><span class="row-meta">{{ item.object_type | lower }}</span></td>
+              <td>{{ ui.tag(item.label, 'success' if item.state == 'analyzed' else 'warning' if item.state in ['partial', 'skipped'] else 'danger') }}</td>
+              <td>{{ item.reasons | join(' ') or 'Every check ran.' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <h4>Dynamic SQL that static analysis cannot verify</h4>
+      {% if c.dynamic_sql %}
+      <ul class="plain-list">{% for item in c.dynamic_sql %}<li><code>{{ item.owner }}.{{ item.name }}.{{ item.routine }}</code> line {{ item.line }}{% if item.changed %} <strong>(changed)</strong>{% endif %}</li>{% endfor %}</ul>
+      {% else %}<p class="hint">No dynamic SQL found in the Test bodies.</p>{% endif %}
+      <h4>Dependency coverage</h4>
+      <p class="hint">Counted separately from object coverage, as numbers rather than a percentage: there is no complete list of dependencies to divide by. {{ c.dependency.edges }} edges · {{ c.dependency.verified_edges }} verified in ALL_DEPENDENCIES · {{ c.dependency.inferred_edges }} inferred from source · {{ c.dependency.unresolved }} unresolved · {{ c.dependency.gaps }} objects whose dependencies could not be read · {{ c.dependency.skipped_system_objects }} Oracle-supplied references omitted · depth limit {{ c.dependency.max_depth }}.</p>
+      {% else %}
+      <p class="empty">This report version did not record coverage. Readiness is indeterminate until the packages are analyzed again.</p>
+      {% endif %}
+    </div>
+  </details>
+
+  <details class="card disclosure detail-section" id="ai"{% if print_mode or ai.used %} open{% endif %}>
+    <summary><span class="section-title">AI review</span><span class="section-summary">{% if ai.used %}Used ({{ ai.model }}){% else %}Did not run{% endif %}</span></summary>
+    <div class="section-body">
+      {{ ui.kind('ai') }}
+      {% if not ai.used %}
+      <p>The AI investigator did not run. Every finding in this report comes from the deterministic checks.</p>
+      {% else %}
+      <div class="mini-stats">
+        <div><strong>{{ ai.serious_explained }} of {{ ai.serious }}</strong><span>serious findings explained</span></div>
+        <div><strong>{{ ai.blind_spots | length }}</strong><span>things it could not check</span></div>
+        <div><strong>{{ ai.objects }}</strong><span>database objects read</span></div>
+      </div>
+      {% if ai.unexplained %}
+      <h4>Not reviewed by the AI</h4>
+      <p class="hint">These findings still stand. Use the deterministic evidence for each one.</p>
+      <p>{% for item in ai.unexplained %}<a href="{{ ui.finding_href(view, item.id) }}" data-open-finding="{{ item.id }}" class="chip-link">{{ ui.sev(item.level, item.level | capitalize) }} {{ item.id }}</a> {% endfor %}</p>
+      {% endif %}
+      {% if ai.blind_spots %}
+      <h4>What the AI could not check</h4>
+      <ul class="gap-list">
+        {% for spot in ai.blind_spots %}
+        <li><span>{{ spot.text }}</span> <span class="spot-links">{% for id in spot.issues %}<a href="{{ ui.finding_href(view, id) }}" data-open-finding="{{ id }}">{{ id }}</a> {% endfor %}</span></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      {% if ai.source_rows %}
+      <details class="disclosure"{% if print_mode %} open{% endif %}>
+        <summary>What the AI read <span class="hint">{{ ai.objects }} objects · {{ ai.reads }} reads{% if ai.refused %} · {{ ai.refused }} not allowed{% endif %}</span></summary>
+        <div class="table-scroll">
+          <table class="data-table compact">
+            <thead><tr><th scope="col">Object</th><th scope="col">What it read</th><th scope="col">Database</th></tr></thead>
+            <tbody>
+              {% for item in ai.source_rows %}
+              <tr>
+                <td><code class="obj">{{ item.object }}</code></td>
+                <td>{{ item.what }}</td>
+                <td>{% if item.test %}<span class="env-tag">Test</span>{% endif %}{% if item.production %}<span class="env-tag">Production</span>{% endif %}{% if item.refused %}<span class="env-tag is-refused">Not allowed</span>{% endif %}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% if ai.refused %}<p class="hint">"Not allowed" means the object is outside the list the AI may read. The AI never runs SQL.</p>{% endif %}
+      </details>
+      {% endif %}
+      {% endif %}
+    </div>
+  </details>
+
+  {% if view.ai_leads %}
+  <details class="card disclosure detail-section" id="ai-leads"{% if print_mode or view.ai_leads %} open{% endif %}>
+    <summary><span class="section-title">AI leads</span><span class="section-summary">{{ view.ai_leads | length }} lead{{ 's' if view.ai_leads | length != 1 }} on what the checks could not see</span></summary>
+    <div class="section-body">
+      {{ ui.kind('ai') }}
+      <p class="hint">The automatic checks cannot follow SQL that is built while the program runs, or synonyms that point to other objects. The AI looked into each one. These are unverified leads: they do not block or clear deployment, and the original item stays open until a test or a person confirms it.</p>
+      <ul class="test-groups">
+        {% for lead in view.ai_leads %}
+        <li>
+          <p class="check-head">{{ ui.evidence('ai', 'AI lead · not verified') }} <a href="/analyses/{{ view.run_id }}/findings/{{ lead.id }}">{{ lead.id }}</a> <span>{{ lead.kind_label }}: {{ lead.subject }}</span>{% if lead.reviews %} <span class="hint">· open item <a href="{{ ui.finding_href(view, lead.reviews) }}" data-open-finding="{{ lead.reviews }}">{{ lead.reviews }}</a></span>{% endif %}</p>
+          <p>{{ lead.explanation }}</p>
+          {% if lead.targets %}<p><strong>Possibly uses:</strong> {% for target in lead.targets %}<code class="obj">{{ target }}</code>{{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
+          {% if lead.checked %}
+          <p class="hint">What the AI looked up in the dictionary:</p>
+          <ul class="step-list-plain">{% for item in lead.checked %}<li><code class="obj">{{ item.object }}</code> in {{ view.environment_labels.get(item.environment, item.environment) }}: {{ item.result }}</li>{% endfor %}</ul>
+          {% endif %}
+          {% if lead.test %}<p><span class="attrib attrib-ai">AI suggestion, review before use</span> {{ lead.test }}</p>{% endif %}
+          {% if lead.unknowns %}<p class="hint">Not checked: {{ lead.unknowns }}</p>{% endif %}
+          {% if lead.citation_unconfirmed %}<p class="hint">The AI's line references could not be matched to the captured source.</p>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </details>
+  {% endif %}
+
+  <details class="card disclosure detail-section" id="performance"{% if print_mode %} open{% endif %}>
+    <summary><span class="section-title">SQL performance risk</span><span class="section-summary">{% if perf.recorded %}{{ 'Evaluated' if perf.evaluated else 'Not evaluated' }}{% else %}Not recorded{% endif %}</span></summary>
+    <div class="section-body">
+      {% if not perf.recorded %}
+      <p class="empty">Not evaluated. This report version did not record SQL statements.</p>
+      {% else %}
+      <p class="notice notice-info"><strong>{{ 'Evaluated' if perf.evaluated else 'Not evaluated' }}.</strong> {{ perf.reason }}</p>
+      {% if perf.statements %}
+      <p class="hint">Modified statements to check for performance in Test:</p>
+      <ul class="plain-list">{% for item in perf.statements %}<li>{{ item.operation }} {{ item.table }} in <code>{{ item.owner }}.{{ item.name }}.{{ item.routine }}</code>{% if item.test_line %} (Test line {{ item.test_line }}){% endif %} · {{ item.change }}</li>{% endfor %}</ul>
+      {% endif %}
+      {% endif %}
+    </div>
+  </details>
+
+  <details class="card disclosure detail-section" id="limitations"{% if print_mode %} open{% endif %}>
+    <summary><span class="section-title">Known limitations</span><span class="section-summary">{{ view.limitations | length }} recorded</span></summary>
+    <div class="section-body">
+      {% if view.limitations %}
+      <ul class="limit-list">{% for item in view.limitations %}<li>{{ item }}</li>{% endfor %}</ul>
+      {% else %}<p class="empty">No limitations were recorded.</p>{% endif %}
+    </div>
+  </details>
+
+  <details class="card disclosure detail-section"{% if print_mode %} open{% endif %}>
+    <summary><span class="section-title">Run information</span><span class="section-summary">{{ view.header.run_mode_label }} · {{ view.header.analyzer }} · policy {{ d.policy_version }}</span></summary>
+    <div class="section-body">
+      <dl class="kv">
+        {% for item in audit.metadata %}<div><dt>{{ item.label }}</dt><dd>{{ item.value }}</dd></div>{% endfor %}
+      </dl>
+    </div>
+  </details>
+
+  <details class="card disclosure detail-section" id="phases"{% if print_mode %} open{% endif %}>
+    <summary><span class="section-title">Analysis phases</span><span class="section-summary">{{ audit.phases | selectattr('recorded') | list | length }} of {{ audit.phases | length }} recorded</span></summary>
+    <div class="section-body">
+      {% if audit.status_available %}
+      <ol class="phase-list">
+        {% for phase in audit.phases %}
+        <li class="{{ 'is-done' if phase.recorded else 'is-missing' }}">
+          <span class="phase-mark" aria-hidden="true"></span>
+          <div>
+            <p class="phase-name">{{ phase.label }} <span class="hint">{% if phase.started_at %}{{ phase.started_at[11:19] }} UTC{% elif phase.recorded %}Recorded{% else %}Not recorded{% endif %}</span></p>
+            {% if phase.summary %}<p class="hint">{{ phase.summary }}</p>{% endif %}
+            {% if phase.lines %}
+            <details class="disclosure"{% if print_mode %} open{% endif %}>
+              <summary>{{ phase.lines | length }} detail line{{ 's' if phase.lines | length != 1 }}</summary>
+              <ul class="phase-lines">
+                {% for line in phase.lines %}
+                <li>
+                  {%- if line.finding_id or line.severity or line.environment or line.category %}
+                  <span class="phase-tags">
+                    {%- if line.finding_id %}{% if line.linked and not print_mode %}<a class="phase-ref" href="{{ ui.finding_href(view, line.finding_id) }}" data-open-finding="{{ line.finding_id }}">{{ line.finding_id }}</a>{% else %}<code class="phase-ref">{{ line.finding_id }}</code>{% endif %}{% endif %}
+                    {%- if line.severity %}{{ ui.sev(line.severity, line.severity | capitalize) }}{% endif %}
+                    {%- if line.category %}<span class="tag">{{ line.category }}</span>{% endif %}
+                    {%- if line.environment %}<span class="env-tag">{{ line.environment }}</span>{% endif %}
+                  </span>
+                  {%- endif %}
+                  <span class="phase-text">{{ line.text }}</span>
+                </li>
+                {% endfor %}
+              </ul>
+            </details>
+            {% endif %}
+          </div>
+        </li>
+        {% endfor %}
+      </ol>
+      {% if not audit.phases | selectattr('started_at') | list %}<p class="hint">Per-phase timestamps were not recorded for this run.</p>{% endif %}
+      {% else %}
+      <p class="empty">The run status file is not available, so phase records cannot be shown.</p>
+      {% endif %}
+    </div>
+  </details>
+
+  {% set h = view.history %}
+  <details class="card disclosure detail-section" id="history"{% if print_mode %} open{% endif %}>
+    <summary><span class="section-title">Run history</span><span class="section-summary">{{ h.runs | length }} run{{ 's' if h.runs | length != 1 }} for these packages</span></summary>
+    <div class="section-body">
+      {% if h.stale_reason %}<p class="notice notice-warning">{{ h.stale_reason }}</p>{% else %}<p class="hint">Snapshot age: {{ h.age }}.</p>{% endif %}
+      {% if h.runs %}
+      <ul class="record-list">
+        {% for run in h.runs[:10] %}
+        <li>{% if run.run_id == view.run_id %}<strong>This run</strong>{% else %}<a href="/analyses/{{ run.run_id }}/report">{{ run.run_id[:8] }}</a>{% endif %} · {{ run.created_at[:19] | replace('T', ' ') }} UTC · {{ run.recommendation }}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      {% set cmp = h.comparison %}
+      {% if cmp %}
+      <h4>Compared with the previous run <a href="/analyses/{{ cmp.previous_run_id }}/report">{{ cmp.previous_run_id[:8] }}</a></h4>
+      <p class="hint">Findings are matched by fingerprint (object, rule, and evidence), so the same issue keeps its identity across runs even though finding IDs change.</p>
+      <dl class="kv">
+        <div><dt>New findings</dt><dd>{{ cmp.new | length }}</dd></div>
+        <div><dt>Resolved findings</dt><dd>{{ cmp.resolved | length }}</dd></div>
+        <div><dt>Unchanged</dt><dd>{{ cmp.unchanged | length }}</dd></div>
+        <div><dt>Severity changed</dt><dd>{{ cmp.severity_changed | length }}</dd></div>
+        <div><dt>New blockers</dt><dd>{{ cmp.blockers_new | length }}</dd></div>
+        <div><dt>Resolved blockers</dt><dd>{{ cmp.blockers_resolved | length }}</dd></div>
+        <div><dt>Checksum changes</dt><dd>{{ cmp.hash_changes | length }}</dd></div>
+        <div><dt>Recommendation</dt><dd>{{ cmp.recommendation_before }} → {{ cmp.recommendation_after }}</dd></div>
+      </dl>
+      {% for label, items in [('New', cmp.new), ('Resolved', cmp.resolved)] if items %}
+      <details class="disclosure"{% if print_mode %} open{% endif %}>
+        <summary>{{ label }} findings ({{ items | length }})</summary>
+        <ul class="plain-list">{% for item in items %}<li>{{ ui.sev(item.level, item.level | capitalize) }} <code>{{ item.fingerprint or item.id }}</code> {{ item.object }} · {{ item.text }}</li>{% endfor %}</ul>
+      </details>
+      {% endfor %}
+      {% if cmp.severity_changed %}
+      <ul class="plain-list">{% for item in cmp.severity_changed %}<li><code>{{ item.fingerprint }}</code> {{ item.object }}: {{ item.before }} → {{ item.after }}</li>{% endfor %}</ul>
+      {% endif %}
+      {% if cmp.blockers_new or cmp.blockers_resolved %}
+      <p>{% for item in cmp.blockers_new %}{{ ui.tag('New blocker', 'danger') }} {{ item }} {% endfor %}{% for item in cmp.blockers_resolved %}{{ ui.tag('Resolved blocker', 'success') }} {{ item }} {% endfor %}</p>
+      {% endif %}
+      {% if cmp.hash_changes %}
+      <details class="disclosure"{% if print_mode %} open{% endif %}>
+        <summary>Checksum changes ({{ cmp.hash_changes | length }})</summary>
+        <ul class="plain-list">{% for item in cmp.hash_changes %}<li>{{ view.environment_labels.get(item.environment, item.environment) }} {{ item.object }}: {{ ui.short_hash(item.before) }} → {{ ui.short_hash(item.after) }}</li>{% endfor %}</ul>
+      </details>
+      {% endif %}
+      {% elif h.runs | length <= 1 %}
+      <p class="hint">No earlier completed run of exactly these packages exists, so there is nothing to compare.</p>
+      {% endif %}
+    </div>
+  </details>
+
+  <details class="card disclosure detail-section"{% if print_mode %} open{% endif %}>
+    <summary><span class="section-title">Object versions</span><span class="section-summary">SHA-256 per environment</span></summary>
+    <div class="section-body">
+      <div class="table-scroll">
+        <table class="data-table compact">
+          <thead><tr><th scope="col">Object</th><th scope="col">Proposed · {{ view.header.proposed.label }}</th><th scope="col">Baseline · {{ view.header.baseline.label }}</th><th scope="col">State</th></tr></thead>
+          <tbody>
+            {% for item in audit.hashes %}
+            <tr>
+              <td><code class="obj">{{ item.label }}</code></td>
+              <td><code class="hash">{{ item.test_hash or 'Not captured' }}</code></td>
+              <td><code class="hash">{{ item.prod_hash or 'Not captured' }}</code></td>
+              <td>{{ item.state_label }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="4">No objects were compared.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </details>
+
+  <details class="card disclosure detail-section"{% if print_mode %} open{% endif %}>
+    <summary><span class="section-title">AI investigator tool calls</span><span class="section-summary">{{ audit.tools | length }} recorded</span></summary>
+    <div class="section-body">
+      {{ ui.kind('ai') }}
+      {% if audit.agentic %}
+      <p class="hint">In this run the investigator chose the order of the read-only dictionary reads below. The deterministic checks scored those reads and chose the recommendation.{% if view.ai_leads %} The source-line, synonym, and object checks at the end answered the blind-spot questions after scoring; they did not feed the checks.{% endif %}</p>
+      {% if audit.agent_summary %}
+      <h4>Investigator's closing note</h4>
+      <p>{{ audit.agent_summary }}</p>
+      <p class="hint">The investigator's own words. This note is not a finding and does not change the recommendation.</p>
+      {% endif %}
+      {% endif %}
+      {% if not view.ai.used %}
+      <p class="empty">The AI investigator did not run, so it made no tool calls.</p>
+      {% elif audit.tools %}
+      <p class="hint">Each read the investigator made through the allow-listed tools, in order. The model's private reasoning is not shown.</p>
+      <div class="table-scroll">
+        <table class="data-table compact">
+          <thead><tr><th scope="col">#</th><th scope="col">Tool</th><th scope="col">Environment</th><th scope="col">Object</th><th scope="col">Result</th></tr></thead>
+          <tbody>
+            {% for call in audit.tools %}
+            <tr>
+              <td>{{ call.index }}{% if call.at %}<span class="row-meta">{{ call.at[11:19] }} UTC</span>{% endif %}</td>
+              <td>{{ call.tool }}</td>
+              <td>{{ call.environment }}</td>
+              <td><code class="obj">{{ call.target }}</code></td>
+              <td>{% if call.ok %}Allowed{% if call.bytes is not none %} <span class="hint">{{ call.bytes }} bytes</span>{% endif %}{% else %}<span class="env-tag is-refused">Not allowed</span>{% endif %}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="empty">The AI investigator made no tool calls.</p>
+      {% endif %}
+    </div>
+  </details>
+
+  <details class="card disclosure detail-section"{% if print_mode %} open{% endif %}>
+    <summary><span class="section-title">Reviewer actions</span><span class="section-summary">{{ view.review.events | length }} recorded</span></summary>
+    <div class="section-body">
+      {% set events = view.review.events %}
+      {% if events or view.registry.events %}
+      <ol class="event-list">
+        {% for event in events %}
+        <li><span class="env-tag">{{ event.action }}</span> {{ event.at[:19] | replace('T', ' ') }} UTC · {{ event.actor.name }} (self-declared, {{ event.actor.role }}){% if event.finding_id %} · <a href="{{ ui.finding_href(view, event.finding_id) }}" data-open-finding="{{ event.finding_id }}">{{ event.finding_id }}</a>{% endif %}
+          {% if event.detail.before is defined %}<span class="row-meta">Changed {% for key, value in event.detail.after.items() if event.detail.before.get(key) != value %}{{ key }}: {{ event.detail.before.get(key) or '—' }} → {{ value or '—' }}{{ '; ' if not loop.last }}{% endfor %}</span>{% endif %}
+        </li>
+        {% endfor %}
+        {% for event in view.registry.events | reverse %}
+        <li><span class="env-tag">{{ event.action }}</span> {{ event.at[:19] | replace('T', ' ') }} UTC · {{ event.actor.name }} (self-declared, {{ event.actor.role }}) · {{ event.detail.owner }}.{{ event.detail.name }} {{ (event.detail.object_type or '') | lower }}</li>
+        {% endfor %}
+      </ol>
+      {% else %}
+      <p class="empty">No approval, baseline, or manifest action has been recorded for this run.</p>
+      {% endif %}
+    </div>
+  </details>
+
+  {% if audit.events %}
+  <details class="card disclosure detail-section"{% if print_mode %} open{% endif %}>
+    <summary>Run events <span class="hint">{{ audit.events | length }} recorded</span></summary>
+    <ol class="event-list">
+      {% for event in audit.events %}<li><span class="env-tag">{{ event.stage }}</span> {{ event.message }}</li>{% endfor %}
+    </ol>
+  </details>
+  {% endif %}
+</section>

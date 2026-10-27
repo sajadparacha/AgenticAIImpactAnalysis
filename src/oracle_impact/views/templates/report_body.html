@@ -19,7 +19,7 @@
     <nav class="crumbs" aria-label="Breadcrumb">
       <ol>
         <li><a href="/">New analysis</a></li>
-        <li><a href="/analyses/{{ view.run_id }}/report?tab=audit#phases" title="Run log for {{ view.run_id }}">Run {{ short_id }}</a></li>
+        <li><a href="/analyses/{{ view.run_id }}/report?tab=details#phases" title="Run log for {{ view.run_id }}">Run {{ short_id }}</a></li>
         <li aria-current="page">Impact report</li>
       </ol>
     </nav>
@@ -94,7 +94,7 @@
       <ul class="plain-list verdict-reasons">{% for reason in verdict.indeterminate_reasons %}<li>{{ reason }}</li>{% endfor %}</ul>
       {% endif %}
       {% if unresolved.total %}
-      <p class="verdict-unresolved"><a href="{{ view.base_url }}?tab=validation#coverage" data-goto-tab="validation">{{ unresolved.total }} thing{{ 's' if unresolved.total != 1 }} the checks could not resolve{% if unresolved.has_leads %}, including {{ unresolved.ai_leads }} AI lead{{ 's' if unresolved.ai_leads != 1 }}{% endif %}</a></p>
+      <p class="verdict-unresolved"><a href="{{ view.base_url }}?tab=details#coverage" data-goto-tab="details">{{ unresolved.total }} thing{{ 's' if unresolved.total != 1 }} the checks could not resolve{% if unresolved.has_leads %}, including {{ unresolved.ai_leads }} AI lead{{ 's' if unresolved.ai_leads != 1 }}{% endif %}</a></p>
       {% endif %}
       <p class="verdict-policy">Policy result: {{ verdict.label }}, policy {{ verdict.policy_version }}</p>
     </div>
@@ -144,17 +144,15 @@
 
   {% if not print_mode %}
   <nav class="tabs" role="tablist" aria-label="Report views" data-tabs>
-    {% for key, label, count in [
-      ('overview', 'Overview', none),
-      ('findings', 'Findings', view.counts.findings),
-      ('objects', 'Changed objects', view.counts.objects),
-      ('source', 'Source comparison', view.counts.changed_objects),
-      ('dependencies', 'Dependencies', view.counts.dependencies),
-      ('validation', 'Tests & approval', none),
-      ('audit', 'Audit trail', none)
+    {% for key, label, icon_name, count in [
+      ('overview', 'Summary', 'layout-dashboard', none),
+      ('findings', 'Findings', 'list-checks', view.counts.findings),
+      ('objects', 'Changes', 'file-diff', view.counts.objects),
+      ('dependencies', 'Dependencies', 'network', view.counts.dependencies),
+      ('details', 'Details', 'file-search', none)
     ] %}
     <a role="tab" id="tab-{{ key }}" href="{{ view.base_url }}?tab={{ key }}" data-tab-link="{{ key }}"
-       aria-selected="{{ 'true' if state.tab == key else 'false' }}" tabindex="{{ '0' if state.tab == key else '-1' }}">{{ label }}{% if count is not none %} <span class="count">{{ count }}</span>{% endif %}</a>
+       aria-selected="{{ 'true' if state.tab == key else 'false' }}" tabindex="{{ '0' if state.tab == key else '-1' }}">{{ icon(icon_name) }}<span>{{ label }}</span>{% if count is not none %} <span class="count">{{ count }}</span>{% endif %}</a>
     {% endfor %}
   </nav>
   {% endif %}
@@ -162,10 +160,8 @@
   {% include "_report_overview.html" %}
   {% include "_report_findings.html" %}
   {% include "_report_objects.html" %}
-  {% include "_report_source.html" %}
   {% include "_report_dependencies.html" %}
-  {% include "_report_validation.html" %}
-  {% include "_report_audit.html" %}
+  {% include "_report_details.html" %}
 
   {% if print_mode %}
   <section class="rv-panel print-details">

@@ -166,7 +166,7 @@ def test_records_survive_an_application_restart(tmp_path):
     assert review["review"]["validations"] == [] and review["review"]["reviews"] == []
     assert review["approval"]["latest"]["decision"] == "on_hold"
     assert review["approval"]["latest"]["actor"]["name"] == "Dana"
-    page = restarted.get(f"/analyses/{run_id}/report?tab=audit").text
+    page = restarted.get(f"/analyses/{run_id}/report?tab=details").text
     assert "CHG-9" in restarted.get(f"/analyses/{run_id}/report?tab=objects").text
     assert "Dana" in page
     assert "Invoicing" in restarted.get("/mappings").text

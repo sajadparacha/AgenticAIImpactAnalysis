@@ -138,7 +138,7 @@ def test_finished_runs_open_the_report_and_unfinished_runs_show_progress(tmp_pat
     finished = client.get(f"/analyses/{run_id}", follow_redirects=False)
     assert finished.status_code == 303
     assert finished.headers["location"] == f"/analyses/{run_id}/report"
-    assert f'href="/analyses/{run_id}/report?tab=audit#phases"' in started.text
+    assert f'href="/analyses/{run_id}/report?tab=details#phases"' in started.text
     assert f"Run {run_id[:8]}" in started.text
     assert 'id="phases"' in started.text
 

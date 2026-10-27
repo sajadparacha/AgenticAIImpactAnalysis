@@ -1,31 +1,30 @@
 {% import "_report_macros.html" as ui %}
 <section class="rv-panel" id="overview" {{ ui.panel_attrs(state, 'overview', print_mode) }}>
-  <h2 class="{{ '' if print_mode else 'sr-only' }}">Overview</h2>
+  <h2 class="{{ '' if print_mode else 'sr-only' }}">Summary</h2>
   <div class="overview-grid">
     <div class="overview-main">
 
       <section class="card" aria-labelledby="hold-title">
         <div class="card-head">
-          <h3 id="hold-title">{% if ready.decision == 'recommended' %}Nothing is holding deployment{% elif ready.decision == 'indeterminate' %}Why the analyzer cannot decide{% else %}Why deployment is on hold{% endif %} {% if d.hold_rows %}<span class="count-chip">{{ d.hold_rows | length }}</span>{% endif %}</h3>
+          <h3 id="hold-title">{% if ready.decision == 'recommended' %}Nothing is holding deployment{% elif ready.decision == 'indeterminate' %}What the analyzer cannot decide{% else %}What's holding deployment{% endif %} {% if d.hold_rows %}<span class="count-chip">{{ d.hold_rows | length }}</span>{% endif %}</h3>
           {{ ui.kind('policy') }}
         </div>
         {% if d.hold_rows %}
         <div class="table-scroll">
           <table class="data-table compact hold-table">
-            <thead><tr><th scope="col">Finding</th><th scope="col">Object</th><th scope="col">Severity</th><th scope="col">Evidence</th><th scope="col">Status</th><th scope="col">Action</th></tr></thead>
+            <thead><tr><th scope="col">Issue</th><th scope="col">Object</th><th scope="col">Severity</th><th scope="col">Status</th><th scope="col">How it clears</th></tr></thead>
             <tbody>
               {% for item in d.hold_rows %}
               <tr class="hold-{{ item.kind }}">
                 <td>
                   <span class="row-title">{{ item.title }}</span>
-                  <span class="row-meta">{% if item.finding_id %}<a href="{{ ui.finding_href(view, item.finding_id) }}" data-open-finding="{{ item.finding_id }}">{{ item.finding_id }}</a> · {% endif %}{{ item.rule_id }} · {{ {'blocker': 'Blocks deployment', 'validation': 'Requires validation', 'drift': 'Drift'}[item.kind] }}</span>
+                  <span class="row-meta">{% if item.finding_id %}<a href="{{ ui.finding_href(view, item.finding_id) }}" data-open-finding="{{ item.finding_id }}">{{ item.finding_id }}</a> · {% endif %}{{ item.rule_id }}</span>
                   <span class="row-meta">{{ item.headline }}</span>
                 </td>
                 <td>{% if item.object %}<code class="obj">{{ item.object }}</code><span class="row-meta">{{ item.object_type | lower }}</span>{% else %}<span class="hint">Not identified</span>{% endif %}</td>
                 <td>{% if item.level %}{{ ui.sev(item.level, item.level_label) }}{% else %}<span class="hint">Not rated</span>{% endif %}</td>
-                <td>{% if item.evidence_status %}{{ ui.evidence(item.evidence_status, item.evidence_label) }}{% endif %}</td>
                 <td>{{ ui.tag(item.state_label, 'warning' if item.state == 'awaiting_review' else 'danger') }}{% if item.state_reason %}<span class="row-meta">{{ item.state_reason }}</span>{% endif %}</td>
-                <td>{{ item.action }}<span class="row-meta">{{ item.resolution }}</span></td>
+                <td>{% if item.fix_required %}<span class="row-meta">{{ item.action }}</span>{% else %}{{ item.action }}<span class="row-meta">{{ item.resolution }}</span>{% endif %}</td>
               </tr>
               {% endfor %}
             </tbody>
@@ -34,66 +33,70 @@
         {% elif ready.decision == 'indeterminate' %}
         <p>The reasons are listed in the banner above. No finding-level result is trustworthy until they are resolved.</p>
         {% else %}
-        <p class="empty">No unresolved blocker, required validation, or unexpected drift under policy {{ d.policy_version }}. {% if view.approval.latest %}The latest human decision is {{ view.approval.labels[view.approval.latest.decision] }}.{% else %}A person still has to record the deployment decision.{% endif %}</p>
+        <p class="empty">Nothing is holding this deployment. {% if view.approval.latest %}The latest human decision is {{ view.approval.labels[view.approval.latest.decision] }}.{% else %}A person still has to record the deployment decision.{% endif %}</p>
         {% endif %}
       </section>
 
       <section class="card" aria-labelledby="next-actions">
-        <div class="card-head"><h3 id="next-actions">Next actions</h3></div>
-        {% if d.next_actions %}
+        <div class="card-head"><h3 id="next-actions">What to do next</h3></div>
+        {% if view.next_steps %}
         <ol class="action-list">
-          {% for action in d.next_actions %}
-          <li>{{ action.text }}{% if not print_mode %} <a href="{{ view.base_url }}?tab={{ action.tab }}" data-goto-tab="{{ action.tab }}" class="hint">Go</a>{% endif %}</li>
+          {% for step in view.next_steps[:5] %}
+          <li>
+            {{ ui.evidence(step.badge_key, step.badge) }} {{ step.text }}
+            {% if not print_mode %}{% if step.finding_id %}<a href="{{ ui.finding_href(view, step.finding_id) }}" data-open-finding="{{ step.finding_id }}" class="hint">Open</a>{% elif step.tab %}<a href="{{ view.base_url }}?tab={{ step.tab }}" data-goto-tab="{{ step.tab }}" class="hint">Go</a>{% endif %}{% endif %}
+          </li>
           {% endfor %}
         </ol>
+        {% if view.next_steps | length > 5 %}
+        <details class="disclosure"{% if print_mode %} open{% endif %}>
+          <summary>{{ view.next_steps | length - 5 }} more</summary>
+          <ol class="action-list" start="6">
+            {% for step in view.next_steps[5:] %}
+            <li>
+              {{ ui.evidence(step.badge_key, step.badge) }} {{ step.text }}
+              {% if not print_mode %}{% if step.finding_id %}<a href="{{ ui.finding_href(view, step.finding_id) }}" data-open-finding="{{ step.finding_id }}" class="hint">Open</a>{% elif step.tab %}<a href="{{ view.base_url }}?tab={{ step.tab }}" data-goto-tab="{{ step.tab }}" class="hint">Go</a>{% endif %}{% endif %}
+            </li>
+            {% endfor %}
+          </ol>
+        </details>
+        {% endif %}
         {% else %}
         <p class="empty">No action is outstanding.</p>
         {% endif %}
-        {% if not print_mode %}
-        <ul class="entry-points">
-          <li><a href="{{ view.base_url }}?tab=findings" data-goto-tab="findings">Explore findings</a></li>
-          <li><a href="{{ view.base_url }}?tab=objects" data-goto-tab="objects">Changed objects and drift</a></li>
-          <li><a href="{{ view.base_url }}?tab=source" data-goto-tab="source">Source comparison</a></li>
-          <li><a href="{{ view.base_url }}?tab=validation" data-goto-tab="validation">Required tests and approval</a></li>
-        </ul>
-        {% endif %}
       </section>
 
-      <section class="card" aria-labelledby="support-summary">
-        <h3 id="support-summary">Plain-language risk summary</h3>
-        {% set serious = m.severity | selectattr('level', 'in', ['critical', 'high']) | map(attribute='count') | sum %}
-        <p>
-          {% if m.findings %}
-          The analyzer recorded {{ m.findings }} finding{{ 's' if m.findings != 1 }}{% if serious %}, {{ serious }} of them critical or high{% endif %}.
-          {% else %}
-          The analyzer recorded no findings.
-          {% endif %}
-          Readiness is <strong>{{ ready.label | lower }}</strong>.
-          {% if view.human_decision.state == 'not_recorded' %}No one has approved or rejected this change in this application.{% else %}Recorded human decision: <strong>{{ view.human_decision.label | lower }}</strong>.{% endif %}
-        </p>
+      <section class="card" aria-labelledby="top-findings">
+        <div class="card-head">
+          <h3 id="top-findings">Top findings</h3>
+          {% if not print_mode %}<a href="{{ view.base_url }}?tab=findings" data-goto-tab="findings">All {{ m.findings }} findings →</a>{% endif %}
+        </div>
         {% if view.top_findings %}
-        <h4>What could go wrong</h4>
-        <ul class="plain-list">
-          {% for row in view.top_findings %}
-          <li>
-            {{ ui.sev(row.level, row.level_label) }} {{ row.headline }}
-            <span class="hint">{% if row.evidence_status == 'confirmed' %}The change is confirmed in the source. The runtime effect has not been tested.{% else %}Possible effect, a hypothesis that has not been tested.{% endif %}</span>
-          </li>
-          {% endfor %}
-        </ul>
+        <div class="table-scroll">
+          <table class="data-table compact">
+            <thead><tr><th scope="col">Severity</th><th scope="col">Finding</th><th scope="col">Object</th><th scope="col">Evidence</th><th scope="col"><span class="sr-only">Details</span></th></tr></thead>
+            <tbody>
+              {% for row in view.top_findings %}
+              <tr>
+                <td>{{ ui.sev(row.level, row.level_label) }}</td>
+                <td><span class="row-title">{{ row.headline }}</span><span class="row-meta">{{ row.id }} · {{ row.category_label }}{% if row.note_id %} · AI note{% endif %}</span></td>
+                <td><code class="obj">{{ row.object }}</code><span class="row-meta">{{ row.object_type | lower }}{% if row.where %} · {{ row.where }}{% endif %}</span></td>
+                <td>{{ ui.evidence(row.evidence_badge_key, row.evidence_badge) }}</td>
+                <td><a class="btn-sm" href="{{ ui.finding_href(view, row.id) }}" data-open-finding="{{ row.id }}">Details<span class="sr-only"> for {{ row.id }}</span></a></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="empty">No finding drives this recommendation.</p>
         {% endif %}
-        <dl class="facts">
-          <div><dt>Affected applications and business processes</dt><dd>{% if view.business.established %}{{ view.business.rows | length }} mapped process{{ 'es' if view.business.rows | length != 1 }} listed under Business process impact.{% else %}Business impact not established. No maintained mapping covers the analyzed objects.{% endif %}</dd></div>
-          <div><dt>Support teams</dt><dd>{% set teams = view.business.rows | map(attribute='mapping') | map(attribute='support_team') | select | unique | list %}{{ teams | join(', ') if teams else 'Not recorded in the business mappings.' }}</dd></div>
-          <div><dt>Monitoring and rollback</dt><dd>Not recorded by the analyzer.</dd></div>
-          <div><dt>Readiness</dt><dd>{{ ready.label }}. Analyzer: {{ rec.label }}. Human decision: {{ view.human_decision.label | lower }}.</dd></div>
-        </dl>
       </section>
 
       <section class="card" aria-labelledby="business-impact">
         <div class="card-head">
-          <h3 id="business-impact">Business process impact</h3>
-          {% if not print_mode %}<a href="/mappings">Maintain mappings →</a>{% endif %}
+          <h3 id="business-impact">Business impact</h3>
+          {% if not print_mode %}<a href="/mappings">Add mappings →</a>{% endif %}
         </div>
         {% set b = view.business %}
         {% if b.rows %}
@@ -117,187 +120,12 @@
         {% if b.unmapped %}
         <p class="notice notice-info">Business impact not established for {% for name in b.unmapped %}<code>{{ name }}</code>{{ ', ' if not loop.last }}{% endfor %}. No mapping exists for {{ 'it' if b.unmapped | length == 1 else 'them' }}; the analyzer does not guess applications or processes.</p>
         {% endif %}
+        {% if not b.rows %}
+        <p class="empty">No business process is mapped to these objects. <a href="/mappings">Add mappings →</a></p>
+        {% endif %}
         {% if b.not_analyzed %}<p class="hint">{{ b.not_analyzed | length }} mapped object{{ 's' if b.not_analyzed | length != 1 }} were outside this run's scope: not analyzed.</p>{% endif %}
       </section>
 
-      <section class="card" aria-labelledby="top-findings">
-        <div class="card-head">
-          <h3 id="top-findings">Findings behind this recommendation {% if m.drivers %}<span class="count-chip">{{ m.drivers }}</span>{% endif %}</h3>
-          <a href="{{ view.base_url }}?tab=findings" data-goto-tab="findings">View all findings →</a>
-        </div>
-        {% if view.top_findings %}
-        <div class="table-scroll">
-          <table class="data-table compact">
-            <thead><tr><th scope="col">Severity</th><th scope="col">Finding</th><th scope="col">Object</th><th scope="col">Evidence</th><th scope="col"><span class="sr-only">Details</span></th></tr></thead>
-            <tbody>
-              {% for row in view.top_findings %}
-              <tr>
-                <td>{{ ui.sev(row.level, row.level_label) }}</td>
-                <td><span class="row-title">{{ row.headline }}</span><span class="row-meta">{{ row.id }} · {{ row.category_label }}{% if row.note_id %} · AI note{% endif %}</span></td>
-                <td><code class="obj">{{ row.object }}</code><span class="row-meta">{{ row.object_type | lower }}{% if row.where %} · {{ row.where }}{% endif %}</span></td>
-                <td>{{ ui.evidence(row.evidence_status, row.evidence_label) }}</td>
-                <td><a class="btn-sm" href="{{ ui.finding_href(view, row.id) }}" data-open-finding="{{ row.id }}">Details<span class="sr-only"> for {{ row.id }}</span></a></td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-        {% if m.drivers > view.top_findings | length %}<p class="hint">Showing the {{ view.top_findings | length }} most severe of {{ m.drivers }}. <a href="{{ view.base_url }}?tab=findings&amp;drivers=1" data-goto-tab="findings" data-filter-drivers>Show all of them</a>.</p>{% endif %}
-        {% else %}
-        <p class="empty">No finding drives this recommendation. {% for item in rec.reasons if not item.id %}{{ item.text }} {% endfor %}</p>
-        {% endif %}
-      </section>
-
-      <section class="card" aria-labelledby="required-actions">
-        <div class="card-head">
-          <h3 id="required-actions">Required actions before deployment</h3>
-          {{ ui.kind('policy') }}
-        </div>
-        {% if view.required_actions %}
-        <ol class="action-list">
-          {% for action in view.required_actions[:5] %}<li>{{ action }}</li>{% endfor %}
-        </ol>
-        {% if view.required_actions | length > 5 %}
-        <details class="disclosure"{% if print_mode %} open{% endif %}>
-          <summary>{{ view.required_actions | length - 5 }} more required action{{ 's' if view.required_actions | length - 5 != 1 }}</summary>
-          <ol class="action-list" start="6">
-            {% for action in view.required_actions[5:] %}<li>{{ action }}</li>{% endfor %}
-          </ol>
-        </details>
-        {% endif %}
-        {% else %}
-        <p class="empty">The recommendation policy recorded no actions.</p>
-        {% endif %}
-        {% if view.suggested_checks %}
-        <h4>Suggested checks for those findings</h4>
-        <ul class="check-list">
-          {% for check in view.suggested_checks %}
-          <li>
-            <span class="check-head">{{ ui.sev(check.level, check.level_label) }} <a href="{{ ui.finding_href(view, check.finding_id) }}" data-open-finding="{{ check.finding_id }}">{{ check.finding_id }}</a> {{ ui.kind('ai' if check.from_ai else 'det') }}</span>
-            <span>{{ check.text }}</span>
-          </li>
-          {% endfor %}
-        </ul>
-        {% endif %}
-        <p class="hint">These are the analyzer's actions. This report does not mark them complete.</p>
-      </section>
-
-      <section class="card" aria-labelledby="changed-objects">
-        <div class="card-head">
-          <h3 id="changed-objects">Changed objects <span class="count-chip">{{ view.counts.changed_objects }}</span></h3>
-          <a href="{{ view.base_url }}?tab=source" data-goto-tab="source">Open source comparison →</a>
-        </div>
-        {% set changed = view.diffs | rejectattr('state', 'equalto', 'unchanged') | list %}
-        {% if changed %}
-        <div class="table-scroll">
-          <table class="data-table compact">
-            <thead><tr><th scope="col">Object</th><th scope="col">Type</th><th scope="col">Change</th><th scope="col">Lines</th><th scope="col">Highest finding</th><th scope="col"><span class="sr-only">Diff</span></th></tr></thead>
-            <tbody>
-              {% for diff in changed %}
-              <tr>
-                <td><code class="obj">{{ diff.label }}</code></td>
-                <td>{{ diff.object_type | lower }}</td>
-                <td>{{ diff.state_label }}</td>
-                <td><span class="plus">+{{ diff.added }}</span> <span class="minus">−{{ diff.removed }}</span></td>
-                <td>{% if diff.level %}{{ ui.sev(diff.level, diff.level | capitalize) }} <span class="hint">{{ diff.findings | length }} linked</span>{% else %}<span class="hint">None linked</span>{% endif %}</td>
-                <td><a class="btn-sm" href="{{ view.base_url }}?tab=source&amp;object={{ diff.key | urlencode }}" data-open-object="{{ diff.key }}">View diff<span class="sr-only"> for {{ diff.label }} {{ diff.object_type | lower }}</span></a></td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-        {% else %}
-        <p class="empty">No compared object changed.</p>
-        {% endif %}
-        {% set unchanged = view.diffs | selectattr('state', 'equalto', 'unchanged') | list %}
-        {% if unchanged %}<p class="hint">{{ unchanged | length }} compared object{{ 's' if unchanged | length != 1 }} unchanged.</p>{% endif %}
-      </section>
     </div>
-
-    <aside class="overview-side">
-      <section class="card" aria-labelledby="risk-distribution">
-        <h3 id="risk-distribution">Risk distribution</h3>
-        {% set total = m.findings %}
-        {% if total %}
-        <svg class="stack-bar" viewBox="0 0 300 18" role="img" aria-labelledby="risk-bar-title">
-          <title id="risk-bar-title">Findings by severity: {% for item in m.severity %}{{ item.count }} {{ item.label | lower }}{{ ', ' if not loop.last }}{% endfor %}</title>
-          {% set ns = namespace(x=0) %}
-          {% for item in m.severity if item.count %}
-          {% set width = (item.count / total * 300) %}
-          <rect class="seg seg-{{ item.level }}" x="{{ ns.x | round(2) }}" y="0" width="{{ width | round(2) }}" height="18"/>
-          {% set ns.x = ns.x + width %}
-          {% endfor %}
-        </svg>
-        <ul class="legend">
-          {% for item in m.severity %}
-          <li class="{{ 'is-zero' if not item.count }}"><span class="dot dot-{{ item.level }}" aria-hidden="true"></span>{{ item.label }}<span>{{ item.count }}{% if item.count %} <small>({{ (item.count / total * 100) | round | int }}%)</small>{% endif %}</span></li>
-          {% endfor %}
-        </ul>
-        <p class="hint">Deterministic findings only. {{ m.ai_notes_attached }} carry an AI note{% if m.ai_only %}; {{ m.ai_only }} AI-only note{{ 's' if m.ai_only != 1 }} are not counted{% endif %}.</p>
-        {% else %}
-        <p class="empty">No deterministic findings were recorded.</p>
-        {% endif %}
-      </section>
-
-      <section class="card" aria-labelledby="affected-packages">
-        <h3 id="affected-packages">Affected objects</h3>
-        <div class="table-scroll">
-        <table class="data-table compact">
-          <thead><tr><th scope="col">Object</th><th scope="col">Findings</th><th scope="col">Highest</th></tr></thead>
-          <tbody>
-            {% for item in view.packages %}
-            <tr>
-              <td><code class="obj">{{ item.name }}</code>{% if item.added is not none %}<span class="row-meta"><span class="plus">+{{ item.added }}</span> <span class="minus">−{{ item.removed }}</span></span>{% else %}<span class="row-meta">Not a selected package</span>{% endif %}</td>
-              <td>{{ item.findings }}</td>
-              <td>{% if item.level %}{{ ui.sev(item.level, item.level_label) }}{% else %}<span class="hint">None</span>{% endif %}</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-        </div>
-      </section>
-
-      <section class="card" aria-labelledby="coverage-side">
-        <h3 id="coverage-side">Analysis coverage</h3>
-        {% set c = view.coverage %}
-        {% if c.recorded %}
-        <p class="coverage-figure"><strong>{{ c.analyzed }} of {{ c.in_scope }}</strong> in-scope objects fully analyzed{% if c.percent is not none %} <span class="hint">({{ c.percent }}%)</span>{% endif %}</p>
-        <p class="hint">Denominator: {{ c.denominator }}.</p>
-        <ul class="gap-list">
-          {% for key, label in [('partial', 'partially analyzed'), ('skipped', 'skipped'), ('inaccessible', 'inaccessible'), ('failed', 'failed')] %}
-          <li class="{{ 'is-zero' if not c[key] }}"><strong>{{ c[key] }}</strong> {{ label }}</li>
-          {% endfor %}
-          <li><strong>{{ c.dynamic_sql | length }}</strong> dynamic SQL statement{{ 's' if c.dynamic_sql | length != 1 }} not resolvable statically{% if c.dynamic_changed %} ({{ c.dynamic_changed }} on changed lines){% endif %}</li>
-        </ul>
-        <p class="hint">Dependencies, counted separately: {{ c.dependency.edges }} edges, {{ c.dependency.verified_edges }} from the dictionary, {{ c.dependency.inferred_edges }} inferred from source, {{ c.dependency.unresolved }} unresolved, {{ c.dependency.gaps }} unreadable.</p>
-        {% else %}
-        <p class="empty">This report version did not record analysis coverage. Readiness is indeterminate until the packages are analyzed again.</p>
-        {% endif %}
-      </section>
-
-      <section class="card" aria-labelledby="unverified">
-        <h3 id="unverified">What remains unverified</h3>
-        {% set u = view.unverified %}
-        <ul class="gap-list">
-          <li><strong>{{ u.potential }}</strong> finding{{ 's' if u.potential != 1 }} potential, not confirmed</li>
-          <li><strong>{{ u.unknown }}</strong> finding{{ 's' if u.unknown != 1 }} that could not be checked</li>
-          {% if view.ai.used %}
-          <li><strong>{{ u.unexplained }}</strong> serious finding{{ 's' if u.unexplained != 1 }} the AI did not review</li>
-          <li><strong>{{ u.blind_spots }}</strong> thing{{ 's' if u.blind_spots != 1 }} the AI could not check</li>
-          {% endif %}
-          <li><strong>{{ u.limitations }}</strong> known limitation{{ 's' if u.limitations != 1 }}</li>
-        </ul>
-        <a href="{{ view.base_url }}?tab=validation" data-goto-tab="validation">Review verification gaps →</a>
-      </section>
-
-      <section class="card legend-card" aria-labelledby="read-guide">
-        <h3 id="read-guide">How to read this report</h3>
-        <dl class="facts">
-          <div><dt>{{ ui.kind('det') }}</dt><dd>Computed in Python from the captured source and Oracle metadata. Drives severity and the recommendation.</dd></div>
-          <div><dt>{{ ui.kind('ai') }}</dt><dd>{% if view.ai.used %}Written by {{ view.ai.model or 'the AI investigator' }}. An interpretation, not proof. It cannot change severity or the recommendation.{% else %}The AI investigator did not run for this report. Nothing here is model output.{% endif %}</dd></div>
-          <div><dt>Required test</dt><dd>The policy says to test or review this before deployment. The result is tracked outside this report, usually in the reply to the email.</dd></div>
-        </dl>
-      </section>
-    </aside>
   </div>
 </section>

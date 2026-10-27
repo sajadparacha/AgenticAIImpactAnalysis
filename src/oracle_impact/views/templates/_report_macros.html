@@ -27,7 +27,7 @@
 {%- endmacro %}
 
 {% macro diff_href(view, link) -%}
-{{ view.base_url }}?tab=source&amp;object={{ link.key | urlencode }}{% if link.line %}&amp;line={{ link.line }}&amp;side={{ link.side }}{% endif %}
+{{ view.base_url }}?tab=objects&amp;object={{ link.key | urlencode }}{% if link.line %}&amp;line={{ link.line }}&amp;side={{ link.side }}{% endif %}
 {%- endmacro %}
 
 {% macro tag(label, tone) -%}

@@ -48,7 +48,7 @@ document.querySelectorAll("[data-open-approval]").forEach((button) => {
     if (approvalDialog && typeof approvalDialog.showModal === "function") {
       approvalDialog.showModal();
     } else {
-      window.location.href = button.closest("[data-report]")?.dataset.base + "?tab=validation#approval";
+      window.location.href = button.closest("[data-report]")?.dataset.base + "?tab=details#approval";
     }
   });
 });
@@ -248,9 +248,9 @@ function initReport(root) {
   const SELECT_KEYS = ["sev", "type", "cat", "src", "ev", "ec", "blk", "env", "chg"];
   const DEP_KEYS = ["dq", "dir", "impact"];
   const EDGE_KEYS = ["eq", "edir", "eprov", "etype"];
-  const LEGACY = { comparison: "source", changes: "findings", dependencies: "dependencies", ai: "validation", risk: "overview", limitations: "validation", validation: "validation", audit: "audit", overview: "overview",
-    objects: "objects", compilation: "objects", transactions: "objects", coverage: "validation", approval: "validation",
-    "policy-items": "validation", "regression-tests": "validation", performance: "validation", history: "audit" };
+  const LEGACY = { comparison: "objects", changes: "findings", dependencies: "dependencies", ai: "details", risk: "overview", limitations: "details", validation: "details", audit: "details", overview: "overview",
+    objects: "objects", compilation: "objects", transactions: "objects", coverage: "details", approval: "details",
+    "policy-items": "details", "regression-tests": "details", performance: "details", history: "details", source: "objects", "ai-leads": "details", phases: "details" };
   const EVIDENCE_ORDER = { confirmed: 0, potential: 1, unknown: 2 };
   const base = root.dataset.base;
   const tabs = [...root.querySelectorAll("[data-tab-link]")];
@@ -296,7 +296,7 @@ function initReport(root) {
     const params = new URLSearchParams();
     if (state.tab !== "overview") params.set("tab", state.tab);
     if (state.finding) params.set("finding", state.finding);
-    if (state.tab === "source" && state.object) {
+    if (state.tab === "objects" && state.object) {
       params.set("object", state.object);
       if (state.line) {
         params.set("line", state.line);
@@ -322,7 +322,7 @@ function initReport(root) {
       tab.tabIndex = active ? 0 : -1;
     });
     panels.forEach((panel, name) => { panel.hidden = name !== key; });
-    if (key === "source") showObject(state.object, { line: state.line, side: state.side, quiet: true });
+    if (key === "objects") showObject(state.object, { line: state.line, side: state.side, quiet: true });
     if (options.focus) panels.get(key).focus({ preventScroll: true });
     if (options.write !== false) writeUrl(Boolean(options.push));
   }
@@ -549,7 +549,7 @@ function initReport(root) {
       state.object = key;
       state.line = line || "";
       state.side = side === "p" ? "p" : "t";
-      showTab("source", { push: true });
+      showTab("objects", { push: true });
       return;
     }
     const objectLink = event.target.closest("[data-open-object]");
@@ -557,7 +557,7 @@ function initReport(root) {
       event.preventDefault();
       state.object = objectLink.dataset.openObject;
       state.line = "";
-      showTab("source", { push: true });
+      showTab("objects", { push: true });
       return;
     }
     const depLink = event.target.closest("[data-goto-dep]");

@@ -47,7 +47,8 @@ TEMPLATES.env.globals["ai_sources"] = ai_sources
 TEMPLATES.env.globals["build_report_view"] = build_report_view
 TEMPLATES.env.globals["initial_state"] = initial_state
 SESSION_COOKIE = "oia_session"
-_TABS_AFTER = {"validation", "objects", "findings", "overview"}
+_TABS_AFTER = {"overview", "findings", "objects", "dependencies", "details"}
+_RETURN_TO_ALLOWLIST = {"registry"}
 
 
 def install_routes(app: FastAPI) -> None:
@@ -241,7 +242,7 @@ def install_routes(app: FastAPI) -> None:
 
     @app.post("/analyses/{run_id}/approval")
     async def record_approval(request: Request, run_id: str):
-        return await _act(request, run_id, "validation", "approval_saved", lambda svc, report, form, who: svc.record_approval(report, form, who))
+        return await _act(request, run_id, "overview", "approval_saved", lambda svc, report, form, who: svc.record_approval(report, form, who))
 
     @app.post("/analyses/{run_id}/baseline")
     async def set_baseline(request: Request, run_id: str):
@@ -274,6 +275,26 @@ def install_routes(app: FastAPI) -> None:
                 "csrf_token": csrf_token(settings.secret_key, session),
                 "role": session_role(settings.secret_key, session),
                 "criticalities": CRITICALITIES,
+                "notice": {"text": ACTION_MESSAGES[msg], "error": msg in ERROR_CODES} if msg in ACTION_MESSAGES else None,
+            },
+        )
+
+    @app.get("/registry", response_class=HTMLResponse)
+    def registry_page(request: Request, msg: str = ""):
+        settings = request.app.state.settings
+        session = request.cookies.get(SESSION_COOKIE, "")
+        registry = request.app.state.registry
+        return TEMPLATES.TemplateResponse(
+            request,
+            "registry.html",
+            {
+                "settings": settings,
+                "role": session_role(settings.secret_key, session),
+                "approvals_enabled": settings.approvals_enabled,
+                "csrf_token": csrf_token(settings.secret_key, session),
+                "baselines": registry.baselines(),
+                "manifest": registry.manifest(),
+                "events": registry.events(),
                 "notice": {"text": ACTION_MESSAGES[msg], "error": msg in ERROR_CODES} if msg in ACTION_MESSAGES else None,
             },
         )
@@ -492,7 +513,7 @@ async def _form(request: Request) -> tuple[dict, dict | None]:
 
 
 def _back(run_id: str, tab: str, code: str, finding: str = "") -> RedirectResponse:
-    tab = tab if tab in _TABS_AFTER else "validation"
+    tab = tab if tab in _TABS_AFTER else "overview"
     target = f"/analyses/{run_id}/report?tab={tab}&msg={code}"
     if finding:
         target += f"&finding={finding}"
@@ -519,6 +540,14 @@ async def _act(request: Request, run_id: str, tab: str, success: str, action) ->
 async def _registry_act(request: Request, success: str, action) -> Response:
     service = request.app.state.decisions
     form, who = await _form(request)
+    if form.get("return_to") in _RETURN_TO_ALLOWLIST:
+        if who is None:
+            return RedirectResponse(f"/registry?msg=form_expired", status_code=303)
+        try:
+            action(service, form, who)
+        except ActionError as exc:
+            return RedirectResponse(f"/registry?msg={exc.code}", status_code=303)
+        return RedirectResponse(f"/registry?msg={success}", status_code=303)
     run_id = form.get("run_id", "")
     if service.load(run_id) is None:
         return JSONResponse({"error": "not found"}, status_code=404)
