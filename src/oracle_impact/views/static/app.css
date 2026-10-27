@@ -568,6 +568,12 @@ th[aria-sort="descending"] .sort::after { content: "↓"; content: "↓" / ""; c
 .drawer-bar { display: flex; justify-content: space-between; align-items: center; padding: var(--s3) var(--s4); border-bottom: 1px solid var(--line); }
 .drawer-bar .eyebrow { color: var(--muted); }
 .drawer-body { overflow-y: auto; padding: var(--s4); }
+.drawer-foot { display: flex; justify-content: space-between; align-items: center; gap: var(--s3); padding: var(--s3) var(--s4); border-top: 1px solid var(--line); background: var(--surface); }
+.finding-count { color: var(--muted); font-size: 0.85rem; white-space: nowrap; }
+.drawer-back { display: none; width: auto; padding: 0 var(--s3); gap: var(--s2); font-size: 0.9rem; }
+.drawer-back .icon { width: 18px; height: 18px; }
+.evidence-details { margin-top: var(--s4); }
+.evidence-details summary { font-weight: 650; cursor: pointer; }
 .detail-head h3 { margin: 6px 0 4px; font-size: 1.1rem; }
 .detail-head h3:focus { outline: none; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }
@@ -815,6 +821,9 @@ th[aria-sort="descending"] .sort::after { content: "↓"; content: "↓" / ""; c
   .ai-lines div { grid-template-columns: 1fr; gap: 2px; }
   .tabs a, .btn-sm, .menu summary { min-height: 44px; }
   .table-scroll table { min-width: 44rem; }
+  .drawer { width: 100%; border-left: none; }
+  .drawer-back { display: inline-flex; }
+  .drawer-close-x { display: none; }
 }
 
 @media print {

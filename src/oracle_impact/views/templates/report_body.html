@@ -172,12 +172,18 @@
   <div class="drawer-backdrop" data-drawer-backdrop hidden></div>
   <aside class="drawer" data-drawer role="dialog" aria-modal="true" aria-label="Finding detail"{% if not state.finding %} hidden{% endif %}>
     <div class="drawer-bar">
+      <button type="button" class="icon-btn drawer-back" data-drawer-back aria-label="Back to findings">{{ icon("arrow-left") }}<span>Back</span></button>
       <p class="eyebrow">Finding detail</p>
-      <button type="button" class="icon-btn" data-drawer-close aria-label="Close finding detail">×</button>
+      <button type="button" class="icon-btn drawer-close-x" data-drawer-close aria-label="Close finding detail">×</button>
     </div>
     <div class="drawer-body">
       {% for row in view.rows %}{% include "_finding_detail.html" %}{% endfor %}
     </div>
+    <footer class="drawer-foot">
+      <button type="button" class="btn-ghost" data-prev-finding>{{ icon("chevron-left") }} Previous</button>
+      <span class="finding-count" data-finding-count aria-live="polite"></span>
+      <button type="button" class="btn-ghost" data-next-finding>Next {{ icon("chevron-right") }}</button>
+    </footer>
   </aside>
   {% endif %}
 </article>

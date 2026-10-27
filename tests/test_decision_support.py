@@ -215,8 +215,9 @@ def test_report_tabs_and_filters_render(tmp_path):
     assert "CMP-DEPENDENT" in page or "PKG_LEGACY" in page
 
     detail = client.get(f"/analyses/{run_id}/report?tab=findings").text
-    for question in ("What changed?", "Where is the evidence?", "Why this severity?", "Does it block deployment?", "What needs to be tested?"):
-        assert question in detail
+    for heading in ("What changed", "Does it block deployment", "What to test", "Evidence", "AI interpretation, not evidence", "Evidence details"):
+        assert heading in detail
+    assert "Consequences are predicted from static evidence" in detail
 
     for fmt in ("html", "json"):
         assert client.get(f"/analyses/{run_id}/export?format={fmt}").status_code == 200

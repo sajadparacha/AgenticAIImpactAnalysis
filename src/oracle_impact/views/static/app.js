@@ -477,6 +477,36 @@ function initReport(root) {
       .filter((node) => !node.closest("[hidden]") && !(node.closest("details:not([open])") && node.tagName !== "SUMMARY"));
   }
 
+  function visibleRows() {
+    return rows.filter((row) => !row.hidden);
+  }
+
+  function updateFindingNav(id) {
+    const prev = drawer.querySelector("[data-prev-finding]");
+    const next = drawer.querySelector("[data-next-finding]");
+    const count = drawer.querySelector("[data-finding-count]");
+    if (!prev || !next || !count) return;
+    const visible = visibleRows();
+    const index = visible.findIndex((row) => row.dataset.id === id);
+    if (visible.length === 0 || index < 0) {
+      count.textContent = "";
+      prev.disabled = true;
+      next.disabled = true;
+      return;
+    }
+    count.textContent = `${index + 1} of ${visible.length}`;
+    prev.disabled = index === 0;
+    next.disabled = index === visible.length - 1;
+  }
+
+  function stepFinding(delta) {
+    const visible = visibleRows();
+    const index = visible.findIndex((row) => row.dataset.id === state.finding);
+    if (index < 0) return;
+    const target = visible[index + delta];
+    if (target) openFinding(target.dataset.id, { push: true });
+  }
+
   function openFinding(id, options = {}) {
     if (!drawer) return;
     const detail = drawer.querySelector(`[data-detail="${CSS.escape(id)}"]`);
@@ -488,6 +518,7 @@ function initReport(root) {
     rows.forEach((row) => row.classList.toggle("is-selected", row.dataset.id === id));
     state.finding = id;
     if (options.trigger) lastTrigger = options.trigger;
+    updateFindingNav(id);
     const heading = detail.querySelector("h3");
     if (heading) heading.focus();
     drawer.querySelector(".drawer-body").scrollTop = 0;
@@ -512,6 +543,9 @@ function initReport(root) {
 
   if (drawer) {
     drawer.querySelector("[data-drawer-close]").addEventListener("click", () => closeFinding({ push: true }));
+    drawer.querySelector("[data-drawer-back]").addEventListener("click", () => closeFinding({ push: true }));
+    drawer.querySelector("[data-prev-finding]").addEventListener("click", () => stepFinding(-1));
+    drawer.querySelector("[data-next-finding]").addEventListener("click", () => stepFinding(1));
     if (backdrop) backdrop.addEventListener("click", () => closeFinding({ push: true }));
     drawer.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {

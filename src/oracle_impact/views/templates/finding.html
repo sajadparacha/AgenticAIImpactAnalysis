@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_ui.html" import crumbs %}
 {% block title %}{{ finding.id }}{% endblock %}
 {% block content %}
 {% set is_ai = finding.origin == 'investigator' %}
@@ -10,7 +11,12 @@
   'potential': 'Possible, not confirmed',
   'unknown': 'Could not be checked'
 } %}
-<p class="eyebrow"><a href="/analyses/{{ report.run_id }}/report">Back to report</a></p>
+{{ crumbs([
+  {'href': '/', 'label': 'New analysis'},
+  {'href': '/analyses/' ~ report.run_id ~ '/report', 'label': 'Run ' ~ report.run_id[:8]},
+  {'href': '/analyses/' ~ report.run_id ~ '/report?tab=findings', 'label': 'Findings'},
+  {'label': finding.id},
+]) }}
 <article class="panel finding-page {{ 'ai-panel' if is_ai else '' }}">
   <header class="finding-head">
     <div class="finding-tags">
@@ -60,6 +66,9 @@
       <div><dt>Type of change</dt><dd>{{ finding.change_category | replace('_', ' ') | capitalize | replace('sql', 'SQL') }}</dd></div>
       <div><dt>Status</dt><dd>{{ status_text.get(finding.status.value, finding.status.value) }}</dd></div>
       <div><dt>Confidence</dt><dd>{{ finding.confidence.value | capitalize }}</dd></div>
+      {% if finding.rule_id %}<div><dt>Rule</dt><dd><code>{{ finding.rule_id }}</code></dd></div>{% endif %}
+      {% if finding.fingerprint %}<div><dt>Fingerprint</dt><dd><code>{{ finding.fingerprint }}</code></dd></div>{% endif %}
+      <div><dt>Run</dt><dd><code>{{ report.run_id }}</code></dd></div>
       {% if finding.affected_object %}<div><dt>Affected object</dt><dd>{{ finding.affected_object }}</dd></div>{% endif %}
       {% if finding.changed_lines_test %}<div><dt>Lines in Test</dt><dd>{{ finding.changed_lines_test | join(", ") }}</dd></div>{% endif %}
       {% if finding.corresponding_lines_prod %}<div><dt>Lines in Production</dt><dd>{{ finding.corresponding_lines_prod | join(", ") }}</dd></div>{% endif %}
@@ -87,5 +96,7 @@
     {% endfor %}
   </section>
   {% endif %}
+
+  <p class="caveat">Consequences are predicted from static evidence, not observed. AI text is an interpretation; it cannot confirm a finding or change its severity or readiness.</p>
 </article>
 {% endblock %}
