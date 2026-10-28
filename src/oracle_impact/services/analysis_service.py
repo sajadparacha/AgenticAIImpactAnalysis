@@ -10,8 +10,9 @@ from oracle_impact.analysis.blind_spots import collect_blind_spots
 from oracle_impact.analysis.compilation import collect_compilation, compilation_findings
 from oracle_impact.analysis.coverage import build_coverage, edge_records
 from oracle_impact.analysis.dependencies import discover_dependencies
-from oracle_impact.analysis.existence import existence_candidates, existence_findings
 from oracle_impact.analysis.diff_engine import build_object_diff
+from oracle_impact.analysis.environments import environment_name
+from oracle_impact.analysis.existence import existence_candidates, existence_findings
 from oracle_impact.analysis.grants import compare_grants
 from oracle_impact.analysis.impacts import build_deterministic_findings
 from oracle_impact.analysis.plsql_scanner import scan_package
@@ -626,7 +627,7 @@ class AnalysisService:
             infos.append(
                 EnvironmentInfo(
                     role=roles[environment],
-                    label=labels.get(environment, environment.upper()),
+                    label=environment_name(environment, labels),
                     database_id=item.database_id,
                     fixture=self.settings.fixture_mode,
                 )
@@ -781,13 +782,13 @@ class AnalysisService:
             packages=snapshot.packages,
             test_environment=EnvironmentInfo(
                 role="source",
-                label=self.settings.test_oracle_label,
+                label=environment_name("test", self.labels()),
                 database_id=test_object.database_id if test_object else readers.test.database_id,
                 fixture=self.settings.fixture_mode,
             ),
             production_environment=EnvironmentInfo(
                 role="baseline",
-                label=self.settings.prod_oracle_label,
+                label=environment_name("production", self.labels()),
                 database_id=prod_object.database_id if prod_object else readers.production.database_id,
                 fixture=self.settings.fixture_mode,
             ),
@@ -946,7 +947,7 @@ def _object_states(snapshot: Snapshot, packages, diffs, compilation: Compilation
                 environments.append(
                     EnvironmentObject(
                         environment=environment,
-                        label=labels.get(environment, environment.upper()),
+                        label=environment_name(environment, labels),
                         found=item.found,
                         inaccessible=item.inaccessible,
                         sha256=item.sha256 if item.found else None,

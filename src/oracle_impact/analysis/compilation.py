@@ -4,6 +4,7 @@ Nothing here compiles or alters an object. Validity is what the dictionary
 reports at capture time; an object can be VALID and still fail at runtime.
 """
 
+from oracle_impact.analysis.environments import environment_name
 from oracle_impact.analysis.hashing import finding_id
 from oracle_impact.infrastructure.oracle.gateway import OracleAccessError, OracleUnavailable
 from oracle_impact.models.assessment import CompilationSummary, CompiledObject, CompileError
@@ -132,24 +133,26 @@ def compilation_findings(run_id: str, summary: CompilationSummary, labels: dict[
             summary, "test", item.owner, item.name
         )
         qualified = f"{item.owner}.{item.name}"
+        test_name = environment_name("test", labels)
+        production_name = environment_name("production", labels)
         if item.role == "in_scope":
             scope, severity = "in_scope", Severity.CRITICAL
-            detail = f"{qualified} {item.object_type} is {item.status} in {labels.get('test', 'Test')}. Compilation errors: {listed}."
+            detail = f"{qualified} {item.object_type} is {item.status} in {test_name}. Compilation errors: {listed}."
             action = "Fix the compilation errors in Test and re-run the analysis."
             rationale = "Critical: the proposed version does not compile in Test, so it cannot be deployed as captured."
         elif prod is not None and prod.status != "VALID":
             scope, severity = "dependent_preexisting", Severity.MEDIUM
             detail = (
-                f"Dependent {qualified} {item.object_type} is {item.status} in both {labels.get('test', 'Test')} "
-                f"and {labels.get('production', 'Production')}. Errors in Test: {listed}."
+                f"Dependent {qualified} {item.object_type} is {item.status} in both {test_name} "
+                f"and {production_name}. Errors in Test: {listed}."
             )
             action = "Confirm whether the existing invalid state is expected. It was not introduced by comparing these environments."
             rationale = "Medium: the dependent is already invalid in Production, so the change set may not be the cause."
         else:
             scope, severity = "dependent", Severity.HIGH
             detail = (
-                f"Dependent {qualified} {item.object_type} is {item.status} in {labels.get('test', 'Test')} "
-                f"but {prod.status if prod else 'not recorded'} in {labels.get('production', 'Production')}. Errors in Test: {listed}."
+                f"Dependent {qualified} {item.object_type} is {item.status} in {test_name} "
+                f"but {prod.status if prod else 'not recorded'} in {production_name}. Errors in Test: {listed}."
             )
             action = f"Recompile or update {qualified} in Test and confirm it becomes VALID before promotion."
             rationale = "High: a caller of the changed code no longer compiles in Test."
@@ -170,7 +173,7 @@ def compilation_findings(run_id: str, summary: CompilationSummary, labels: dict[
                 status=EvidenceStatus.CONFIRMED,
                 explanation=detail + " Validity is read from the data dictionary; this report never compiles objects.",
                 recommended_action=action,
-                proposed_tests=[f"After the fix, confirm ALL_OBJECTS shows {qualified} {item.object_type} as VALID in Test."],
+                proposed_tests=[f"After the fix, confirm ALL_OBJECTS shows {qualified} {item.object_type} as VALID in {test_name}."],
                 attributes={"compile_scope": scope, "compile_invalid": scope != "dependent_preexisting", "compile_status": item.status},
                 severity_rationale=rationale,
             )
@@ -182,7 +185,7 @@ def compilation_findings(run_id: str, summary: CompilationSummary, labels: dict[
         test = by_key.get(("test", item.owner, item.name, item.object_type))
         if test is not None and test.status != "VALID":
             continue
-        detail = f"{qualified} {item.object_type} is {item.status} in {labels.get('production', 'Production')} today."
+        detail = f"{qualified} {item.object_type} is {item.status} in {environment_name('production', labels)} today."
         findings.append(
             Finding(
                 id=finding_id(run_id, "compilation", "production", qualified, item.object_type),

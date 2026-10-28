@@ -624,12 +624,10 @@ def test_agentic_page_is_off_and_rejects_runs_while_egress_is_off(tmp_path):
     assert "Let the AI investigate" in home
     assert "AI investigation is off on this server." in home
     assert 'action="/analyses"' in home
-    mappings = client.get("/mappings").text
     assert 'href="/agentic"' not in home
     assert 'href="/" aria-current="page"' in home
     assert "New analysis" in home
-    assert 'href="/mappings" aria-current="page"' not in home
-    assert 'href="/mappings" aria-current="page"' in mappings
+    assert 'href="/mappings"' not in home
 
     rejected = client.post(
         "/analyses",

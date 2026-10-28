@@ -20,12 +20,8 @@
         {% set path = request.url.path if request is defined else '' %}
         {% set nav = namespace(current='') %}
         {% if path == '/' or path.startswith('/analyses/') %}{% set nav.current = 'analysis' %}
-        {% elif path.startswith('/mappings') %}{% set nav.current = 'mappings' %}
-        {% elif path.startswith('/registry') %}{% set nav.current = 'registry' %}
         {% endif %}
         <a href="/"{% if nav.current == 'analysis' %} aria-current="page"{% endif %}>{{ icon("plus") }} New analysis</a>
-        <a href="/mappings"{% if nav.current == 'mappings' %} aria-current="page"{% endif %}>{{ icon("building-2") }} Business mappings</a>
-        <a href="/registry"{% if nav.current == 'registry' %} aria-current="page"{% endif %}>{{ icon("shield-check") }} Trust records</a>
         <form class="nav-form" method="post" action="/logout">
           <button type="submit" class="linkish">{{ icon("log-out") }} Sign out</button>
         </form>

@@ -75,48 +75,20 @@ def test_registry_numbers_object_versions_and_tracks_last_seen(tmp_path):
     assert versions[1]["first_seen_run"] == "run-3"
 
 
-def test_registry_supersedes_baselines_and_keeps_cleared_entries(tmp_path):
-    registry = Registry(tmp_path)
-    key = {"environment": "production", "owner": "APP", "name": "PKG", "object_type": "PACKAGE BODY"}
-    first = registry.set_baseline({**key, "sha256": "a"}, APPROVER)
-    second = registry.set_baseline({**key, "sha256": "b"}, APPROVER)
-    other = registry.set_baseline({**key, "name": "OTHER", "sha256": "c"}, APPROVER)
-    states = {item["id"]: item["status"] for item in registry.baselines()}
-    assert states == {first["id"]: "superseded", second["id"]: "active", other["id"]: "active"}
-    assert registry.clear_baseline(second["id"], APPROVER, "Wrong release") is True
-    assert registry.clear_baseline(second["id"], APPROVER, "again") is False
-    assert registry.clear_baseline(first["id"], APPROVER, "superseded") is False
-    cleared = next(item for item in registry.baselines() if item["id"] == second["id"])
-    assert cleared["status"] == "cleared" and cleared["clear_reason"] == "Wrong release" and cleared["cleared_by"] == APPROVER
-    assert [event["action"] for event in registry.events()] == ["baseline.set"] * 3 + ["baseline.clear"]
-
-
-def test_registry_manifest_and_mapping_lifecycle(tmp_path):
-    registry = Registry(tmp_path)
-    entry = registry.add_manifest({"owner": "APP", "name": "PKG", "object_type": "PACKAGE", "sha256": "a", "change_ref": "CHG-1"}, APPROVER)
-    assert entry["status"] == "approved" and entry["approved_by"] == APPROVER
-    assert registry.withdraw_manifest(entry["id"], APPROVER, "Superseded") is True
-    assert registry.withdraw_manifest(entry["id"], APPROVER, "Superseded") is False
-    assert registry.withdraw_manifest("missing", APPROVER, "x") is False
-    assert registry.manifest()[0]["status"] == "withdrawn"
-
-    mapping = registry.add_mapping({"owner": "APP", "name": "PKG", "application": "Billing"}, APPROVER)
-    assert registry.retire_mapping(mapping["id"], APPROVER) is True
-    assert registry.retire_mapping(mapping["id"], APPROVER) is False
-    assert registry.mappings()[0]["status"] == "retired"
-    actions = [event["action"] for event in registry.events()]
-    assert actions == ["manifest.approve", "manifest.withdraw", "mapping.add", "mapping.retire"]
-
-
 def test_registry_files_are_versioned_json_and_names_are_restricted(tmp_path):
     registry = Registry(tmp_path)
-    registry.add_mapping({"owner": "APP", "name": "PKG"}, APPROVER)
-    payload = json.loads((tmp_path / "mappings.json").read_text())
+    registry.record_versions(
+        "run-1",
+        [{"environment": "test", "owner": "APP", "name": "PKG", "object_type": "PACKAGE", "sha256": "a" * 64, "captured_at": "t1"}],
+    )
+    payload = json.loads((tmp_path / "versions.json").read_text())
     assert payload["schema_version"] == 1 and len(payload["items"]) == 1
     assert not list(tmp_path.glob("*.tmp"))
     with pytest.raises(ValueError):
         registry._read("../../etc/passwd")
-    assert Registry(tmp_path / "missing").baselines() == []
+    with pytest.raises(ValueError):
+        registry._read("mappings")
+    assert Registry(tmp_path / "missing").versions() == []
 
 
 def test_review_store_appends_approvals(tmp_path):

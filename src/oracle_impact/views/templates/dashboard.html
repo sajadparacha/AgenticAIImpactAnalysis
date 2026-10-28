@@ -37,12 +37,15 @@
       {% for name in fixture_packages %}<button type="button" class="demo-chip" data-demo-package="{{ name }}">{{ name }}</button>{% endfor %}
     </p>
     {% endif %}
-    <label class="check">
-      <input type="checkbox" name="investigate" value="1"{% if investigate %} checked{% endif %}{% if not agentic_available %} disabled{% endif %}>
+    <label class="check{% if not agentic_available %} is-disabled{% endif %}">
+      <input type="checkbox" name="investigate" value="1"{% if investigate or agentic_available %} checked{% endif %}{% if not agentic_available %} disabled{% endif %}>
       <span>Let the AI investigate</span>
     </label>
+    {% if not agentic_available %}
+    <p class="hint hint-warn">{{ icon("info") }} AI investigation is off on this server. To use it, set <code>OIA_LLM_EGRESS_ENABLED</code> for an approved endpoint, then restart.</p>
+    {% else %}
     <p class="hint">Slower. While it chooses reads it sees short summaries, not source. Afterwards it may send up to 60 source lines per read to ask about dynamic SQL and synonyms. Those answers are AI leads and do not change the verdict.</p>
-    {% if not agentic_available %}<p class="hint">AI investigation is off on this server.</p>{% endif %}
+    {% endif %}
     {% if models | length > 1 %}
     <details class="disclosure more-options">
       <summary>More options</summary>

@@ -94,39 +94,6 @@
         {% endif %}
       </section>
 
-      <section class="card" aria-labelledby="business-impact">
-        <div class="card-head">
-          <h3 id="business-impact">Business impact</h3>
-          {% if not print_mode %}<a href="/mappings">Add mappings →</a>{% endif %}
-        </div>
-        {% set b = view.business %}
-        {% if b.rows %}
-        <div class="table-scroll">
-          <table class="data-table compact">
-            <thead><tr><th scope="col">Process</th><th scope="col">Object</th><th scope="col">Impact</th><th scope="col">Criticality</th><th scope="col">Owner · support</th></tr></thead>
-            <tbody>
-              {% for row in b.rows %}
-              <tr>
-                <td><span class="row-title">{{ row.mapping.business_process }}</span><span class="row-meta">{{ row.mapping.application }}</span></td>
-                <td><code class="obj">{{ row.qualified }}</code></td>
-                <td>{{ ui.tag(row.label, row.tone) }}<span class="row-meta">{{ row.basis }}</span></td>
-                <td>{{ row.mapping.criticality | capitalize }}</td>
-                <td>{{ row.mapping.business_owner or 'Not recorded' }}<span class="row-meta">{{ row.mapping.support_team or 'Support team not recorded' }}</span></td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-        {% endif %}
-        {% if b.unmapped %}
-        <p class="notice notice-info">Business impact not established for {% for name in b.unmapped %}<code>{{ name }}</code>{{ ', ' if not loop.last }}{% endfor %}. No mapping exists for {{ 'it' if b.unmapped | length == 1 else 'them' }}; the analyzer does not guess applications or processes.</p>
-        {% endif %}
-        {% if not b.rows %}
-        <p class="empty">{{ icon("building-2") }} No business process is mapped to these objects. <a href="/mappings">Add mappings →</a></p>
-        {% endif %}
-        {% if b.not_analyzed %}<p class="hint">{{ b.not_analyzed | length }} mapped object{{ 's' if b.not_analyzed | length != 1 }} were outside this run's scope: not analyzed.</p>{% endif %}
-      </section>
-
     </div>
   </div>
 </section>

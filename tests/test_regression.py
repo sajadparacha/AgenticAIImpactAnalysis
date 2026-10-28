@@ -684,33 +684,11 @@ def _demo(tmp_path, package_name: str):
     return run_catalogs(tmp_path, [package_name], test_catalog, prod_catalog)
 
 
-def _readiness(report, validations=(), reviews=(), baselines=(), manifest=(), superseded=None, stale=None):
-    from oracle_impact.services.change_classification import classify_changes
+def _readiness(report, validations=(), reviews=(), superseded=None, stale=None):
     from oracle_impact.services.readiness import evaluate_readiness, policy_for
 
-    classification = classify_changes(report, list(baselines), list(manifest), 30)
     policy, _ = policy_for(report)
-    return evaluate_readiness(report, policy, list(validations), list(reviews), classification["drift_objects"], superseded, stale)
-
-
-def _baseline(report, environment: str, object_type: str, sha256: str, set_at: str | None = None) -> dict:
-    from datetime import datetime, timezone
-
-    return {
-        "id": f"B-{environment}-{object_type}",
-        "status": "active",
-        "environment": environment,
-        "owner": report.object_states[0].owner,
-        "name": report.object_states[0].name,
-        "object_type": object_type,
-        "sha256": sha256,
-        "set_at": set_at or datetime.now(timezone.utc).isoformat(),
-    }
-
-
-def _test_hash(report, object_type: str) -> str:
-    state = next(item for item in report.object_states if item.object_type == object_type)
-    return state.in_environment("test").sha256
+    return evaluate_readiness(report, policy, list(validations), list(reviews), superseded, stale)
 
 
 def test_dependent_that_does_not_compile_in_test_blocks_deployment(tmp_path):
@@ -780,49 +758,22 @@ def test_report_without_coverage_or_newer_run_is_indeterminate(tmp_path):
     assert _readiness(report, stale="The snapshot is older than 24 hours.")["decision"] == "indeterminate"
 
 
-def test_production_change_against_trusted_baseline_is_unexpected_drift(tmp_path):
+def test_object_summary_compares_captured_checksums(tmp_path):
     from oracle_impact.services.change_classification import classify_changes
 
     report = _demo(tmp_path, "DEMO.PKG_STATUS")
-    baselines = [_baseline(report, "production", "PACKAGE BODY", "0" * 64)]
-    result = classify_changes(report, baselines, [], 30)
+    result = classify_changes(report)
     body = next(item for item in result["objects"] if item["object_type"] == "PACKAGE BODY")
-    assert body["classification"] == "unexpected_drift" and body["production_only"]
-    assert result["counts"]["unexpected_drift"] == 1 and result["production_only"] == 1
-    assert result["baseline_state"] == "partial"
-    readiness = _readiness(report, baselines=baselines)
-    assert readiness["decision"] == "on_hold" and readiness["open_drift"] == 1
+    assert result["recorded"] is True and result["changed"] >= 1
+    assert "classification" not in body and "reasons" not in body
+    assert body["hashes"]["test"] != body["hashes"]["production"]
 
 
-def test_manifest_pinned_test_checksum_is_planned_and_mismatch_is_drift(tmp_path):
-    from oracle_impact.services.change_classification import classify_changes
-
+def test_readiness_does_not_depend_on_trust_records(tmp_path):
     report = _demo(tmp_path, "DEMO.PKG_STATUS")
-    common = {"status": "approved", "owner": "DEMO", "name": "PKG_STATUS", "change_ref": "CHG-1"}
-    pinned = [{**common, "object_type": "PACKAGE BODY", "sha256": _test_hash(report, "PACKAGE BODY")}]
-    planned = classify_changes(report, [], pinned, 30)
-    body = next(item for item in planned["objects"] if item["object_type"] == "PACKAGE BODY")
-    spec = next(item for item in planned["objects"] if item["object_type"] == "PACKAGE")
-    assert body["classification"] == "planned" and "CHG-1" in body["reasons"][0]
-    assert spec["classification"] == "unclassified"
-    stale_pin = [{**common, "object_type": "PACKAGE BODY", "sha256": "f" * 64}]
-    drift = classify_changes(report, [], stale_pin, 30)
-    assert next(item for item in drift["objects"] if item["object_type"] == "PACKAGE BODY")["classification"] == "unexpected_drift"
-
-
-def test_missing_and_outdated_baselines_are_reported_not_hidden(tmp_path):
-    from oracle_impact.services.change_classification import classify_changes
-
-    report = _demo(tmp_path, "DEMO.PKG_STATUS")
-    none = classify_changes(report, [], [], 30)
-    assert none["baseline_state"] == "unavailable" and none["counts"]["unexpected_drift"] == 0
-    assert none["counts"]["unclassified"] == 2
-    old = [
-        _baseline(report, "production", kind, next(s for s in report.object_states if s.object_type == kind).in_environment("production").sha256, "2020-01-01T00:00:00+00:00")
-        for kind in ("PACKAGE", "PACKAGE BODY")
-    ]
-    outdated = classify_changes(report, old, [], 30)
-    assert outdated["baseline_state"] == "outdated" and outdated["counts"]["unexpected_drift"] == 0
+    result = _readiness(report)
+    assert result["decision"] == "recommended"
+    assert "open_drift" not in result and "drift" not in result
 
 
 def test_fingerprints_are_stable_and_run_comparison_tracks_resolution(tmp_path):

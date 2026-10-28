@@ -2,8 +2,7 @@
 
 Blocking rules run on deterministic findings when an analysis finishes and
 their output is saved with the report. Readiness is then evaluated whenever
-the report is shown, from that saved output plus coverage, drift
-classification, and freshness.
+the report is shown, from that saved output plus coverage and freshness.
 
 The report lists required tests. It does not store validation results or
 reviewer decisions, so those items stay open for the life of the report.
@@ -262,26 +261,14 @@ def evaluate_readiness(
     policy: PolicyEvaluation,
     validations: list[dict],
     reviews: list[dict],
-    drift_objects: list[dict],
     superseded_by: str | None,
     stale_reason: str | None = None,
 ) -> dict:
     """Recommended, on hold, or indeterminate, with every reason listed."""
     blockers = [{"item": item, **item_status(item, validations, reviews)} for item in policy.blockers]
     checks = [{"item": item, **item_status(item, validations, reviews)} for item in policy.validations]
-    drift = [
-        {
-            "key": entry["key"],
-            "qualified": entry["qualified"],
-            "object_type": entry["object_type"],
-            "reasons": entry["reasons"],
-            "accepted": entry.get("accepted", False),
-        }
-        for entry in drift_objects
-    ]
     open_blockers = [item for item in blockers if item["state"] != "resolved"]
     open_checks = [item for item in checks if item["state"] != "resolved"]
-    open_drift = [item for item in drift if not item["accepted"]]
     indeterminate: list[str] = []
     if report.status != "completed":
         indeterminate.append(f"The analysis did not complete (status {report.status}).")
@@ -300,20 +287,18 @@ def evaluate_readiness(
     if indeterminate:
         decision = INDETERMINATE
         summary = "The analyzer cannot make a recommendation from this run."
-    elif open_blockers or open_checks or open_drift:
+    elif open_blockers or open_checks:
         decision = ON_HOLD
         parts = []
         if open_blockers:
             parts.append(f"{len(open_blockers)} blocking finding{'s' if len(open_blockers) != 1 else ''}")
         if open_checks:
             parts.append(f"{len(open_checks)} required validation{'s' if len(open_checks) != 1 else ''}")
-        if open_drift:
-            parts.append(f"{len(open_drift)} unexpected drift item{'s' if len(open_drift) != 1 else ''}")
         summary = "Unresolved: " + ", ".join(parts) + "."
     else:
         decision = RECOMMENDED
         summary = (
-            "No unresolved blocker, required validation, or unexpected drift remains under policy "
+            "No unresolved blocker or required validation remains under policy "
             f"{policy.policy_version}. Human approval is still required."
         )
     return {
@@ -324,9 +309,7 @@ def evaluate_readiness(
         "indeterminate_reasons": indeterminate,
         "blockers": blockers,
         "validations": checks,
-        "drift": drift,
         "open_blockers": len(open_blockers),
         "open_validations": len(open_checks),
-        "open_drift": len(open_drift),
         "policy_version": policy.policy_version,
     }

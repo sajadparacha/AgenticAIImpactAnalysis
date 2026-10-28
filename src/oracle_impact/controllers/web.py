@@ -31,7 +31,6 @@ from oracle_impact.security import (
     token_matches,
 )
 from oracle_impact.services.analysis_service import AGENTIC, DETERMINISTIC, AgenticUnavailable, UnknownModel
-from oracle_impact.services.business_impact import CRITICALITIES
 from oracle_impact.services.decision_service import ACTION_MESSAGES, ERROR_CODES, ActionError, actor
 from oracle_impact.services.email_view import AUDIENCES, DEVELOPER, build_email, build_eml, recipients
 from oracle_impact.services.report_view import build_report_view, initial_state
@@ -48,7 +47,6 @@ TEMPLATES.env.globals["build_report_view"] = build_report_view
 TEMPLATES.env.globals["initial_state"] = initial_state
 SESSION_COOKIE = "oia_session"
 _TABS_AFTER = {"overview", "findings", "objects", "dependencies", "details"}
-_RETURN_TO_ALLOWLIST = {"registry"}
 
 
 def install_routes(app: FastAPI) -> None:
@@ -243,69 +241,6 @@ def install_routes(app: FastAPI) -> None:
     @app.post("/analyses/{run_id}/approval")
     async def record_approval(request: Request, run_id: str):
         return await _act(request, run_id, "overview", "approval_saved", lambda svc, report, form, who: svc.record_approval(report, form, who))
-
-    @app.post("/analyses/{run_id}/baseline")
-    async def set_baseline(request: Request, run_id: str):
-        return await _act(request, run_id, "objects", "baseline_saved", lambda svc, report, form, who: svc.set_baseline(report, form, who))
-
-    @app.post("/analyses/{run_id}/manifest")
-    async def approve_manifest(request: Request, run_id: str):
-        return await _act(request, run_id, "objects", "manifest_saved", lambda svc, report, form, who: svc.approve_manifest(report, form, who))
-
-    @app.post("/registry/manifest/{entry_id}/withdraw")
-    async def withdraw_manifest(request: Request, entry_id: str):
-        return await _registry_act(request, "manifest_withdrawn", lambda svc, form, who: svc.withdraw_manifest(entry_id, form, who))
-
-    @app.post("/registry/baselines/{entry_id}/clear")
-    async def clear_baseline(request: Request, entry_id: str):
-        return await _registry_act(request, "baseline_cleared", lambda svc, form, who: svc.clear_baseline(entry_id, form, who))
-
-    @app.get("/mappings", response_class=HTMLResponse)
-    def mappings_page(request: Request, msg: str = ""):
-        settings = request.app.state.settings
-        session = request.cookies.get(SESSION_COOKIE, "")
-        mappings = request.app.state.registry.mappings()
-        return TEMPLATES.TemplateResponse(
-            request,
-            "mappings.html",
-            {
-                "settings": settings,
-                "mappings": [item for item in mappings if item.get("status") == "active"],
-                "retired": [item for item in mappings if item.get("status") != "active"],
-                "csrf_token": csrf_token(settings.secret_key, session),
-                "role": session_role(settings.secret_key, session),
-                "criticalities": CRITICALITIES,
-                "notice": {"text": ACTION_MESSAGES[msg], "error": msg in ERROR_CODES} if msg in ACTION_MESSAGES else None,
-            },
-        )
-
-    @app.get("/registry", response_class=HTMLResponse)
-    def registry_page(request: Request, msg: str = ""):
-        settings = request.app.state.settings
-        session = request.cookies.get(SESSION_COOKIE, "")
-        registry = request.app.state.registry
-        return TEMPLATES.TemplateResponse(
-            request,
-            "registry.html",
-            {
-                "settings": settings,
-                "role": session_role(settings.secret_key, session),
-                "approvals_enabled": settings.approvals_enabled,
-                "csrf_token": csrf_token(settings.secret_key, session),
-                "baselines": registry.baselines(),
-                "manifest": registry.manifest(),
-                "events": registry.events(),
-                "notice": {"text": ACTION_MESSAGES[msg], "error": msg in ERROR_CODES} if msg in ACTION_MESSAGES else None,
-            },
-        )
-
-    @app.post("/mappings")
-    async def add_mapping(request: Request):
-        return await _mapping_act(request, "mapping_saved", lambda svc, form, who: svc.add_mapping(form, who))
-
-    @app.post("/mappings/{mapping_id}/retire")
-    async def retire_mapping(request: Request, mapping_id: str):
-        return await _mapping_act(request, "mapping_retired", lambda svc, form, who: svc.retire_mapping(mapping_id, who))
 
     @app.get("/analyses/{run_id}/findings/{finding_id}", response_class=HTMLResponse)
     def finding_detail(request: Request, run_id: str, finding_id: str):
@@ -537,41 +472,6 @@ async def _act(request: Request, run_id: str, tab: str, success: str, action) ->
     except ActionError as exc:
         return _back(run_id, back_tab, exc.code, finding)
     return _back(run_id, back_tab, success, finding)
-
-
-async def _registry_act(request: Request, success: str, action) -> Response:
-    service = request.app.state.decisions
-    form, who = await _form(request)
-    if form.get("return_to") in _RETURN_TO_ALLOWLIST:
-        if who is None:
-            return RedirectResponse(f"/registry?msg=form_expired", status_code=303)
-        try:
-            action(service, form, who)
-        except ActionError as exc:
-            return RedirectResponse(f"/registry?msg={exc.code}", status_code=303)
-        return RedirectResponse(f"/registry?msg={success}", status_code=303)
-    run_id = form.get("run_id", "")
-    if service.load(run_id) is None:
-        return JSONResponse({"error": "not found"}, status_code=404)
-    if who is None:
-        return _back(run_id, "objects", "form_expired")
-    try:
-        action(service, form, who)
-    except ActionError as exc:
-        return _back(run_id, "objects", exc.code)
-    return _back(run_id, "objects", success)
-
-
-async def _mapping_act(request: Request, success: str, action) -> Response:
-    service = request.app.state.decisions
-    form, who = await _form(request)
-    if who is None:
-        return RedirectResponse("/mappings?msg=form_expired", status_code=303)
-    try:
-        action(service, form, who)
-    except ActionError as exc:
-        return RedirectResponse(f"/mappings?msg={exc.code}", status_code=303)
-    return RedirectResponse(f"/mappings?msg={success}", status_code=303)
 
 
 def _sections(report: Report) -> dict:

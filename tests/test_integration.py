@@ -55,7 +55,7 @@ def test_public_and_protected_routes(tmp_path):
     assert client.get("/health").json()["status"] == "ok"
     assert client.get("/login").status_code == 200
     assert client.get("/static/app.css").status_code == 200
-    for path in ("/", "/mappings", "/analyses/x/report", "/analyses/x/review", "/analyses/x/export"):
+    for path in ("/", "/analyses/x/report", "/analyses/x/review", "/analyses/x/export"):
         response = client.get(path, follow_redirects=False)
         assert response.status_code == 303 and response.headers["location"] == "/login", path
 
@@ -67,10 +67,6 @@ def test_unauthenticated_writes_are_redirected_and_record_nothing(tmp_path):
     anonymous = _client(tmp_path)
     for path, fields in (
         (f"/analyses/{run_id}/approval", {"decision": "approved", "notes": "x"}),
-        (f"/analyses/{run_id}/baseline", {"environment": "production", "object_key": "all", "note": "x"}),
-        (f"/analyses/{run_id}/manifest", {"object_key": "all", "change_ref": "x"}),
-        ("/mappings", {"object": "DEMO.PKG_STATUS"}),
-        ("/registry/baselines/B-1/clear", {"run_id": run_id}),
         ("/analyses", {"packages": "DEMO.PKG_STATUS"}),
     ):
         response = anonymous.post(path, data=fields, follow_redirects=False)
@@ -78,7 +74,6 @@ def test_unauthenticated_writes_are_redirected_and_record_nothing(tmp_path):
     after = _review(owner, run_id)
     assert all(after["review"][key] == [] for key in ("validations", "reviews", "approvals", "events"))
     assert after["readiness"]["decision"] == before["decision"]
-    assert not (tmp_path / "_registry" / "mappings.json").exists()
     assert len([path for path in tmp_path.iterdir() if path.is_dir() and not path.name.startswith("_")]) == 1
 
 
@@ -90,15 +85,15 @@ def test_login_roles_and_logout(tmp_path):
 
     _sign_in(client, APPROVER_TOKEN)
     assert client.cookies.get(COOKIE).startswith("approver.")
-    assert 'name="application"' in client.get("/mappings").text
+    assert "Sign out" in client.get("/").text
 
     response = client.post("/logout", follow_redirects=False)
     assert response.status_code == 303 and response.headers["location"] == "/login"
     assert client.get("/", follow_redirects=False).status_code == 303
 
     analyst = _sign_in(_client(tmp_path))
-    mappings = analyst.get("/mappings").text
-    assert 'name="application"' not in mappings and "Sign in with the approver access token" in mappings
+    assert "Sign out" in analyst.get("/").text
+    assert "/mappings" not in analyst.get("/").text
 
     disabled = client_for(tmp_path)
     denied = disabled.post("/login", data={"access_token": APPROVER_TOKEN}, follow_redirects=False)
@@ -108,7 +103,7 @@ def test_login_roles_and_logout(tmp_path):
 def test_security_headers_on_decision_pages(tmp_path):
     client = _sign_in(_client(tmp_path))
     run_id = _start(client, "DEMO.PKG_STATUS")
-    for path in ("/", "/mappings", f"/analyses/{run_id}/report", f"/analyses/{run_id}/review", f"/analyses/{run_id}/export?format=html"):
+    for path in ("/", f"/analyses/{run_id}/report", f"/analyses/{run_id}/review", f"/analyses/{run_id}/export?format=html"):
         headers = client.get(path).headers
         assert headers["x-frame-options"] == "DENY", path
         assert headers["cache-control"] == "no-store", path
@@ -139,16 +134,14 @@ def test_action_messages_are_fixed_texts(tmp_path):
     assert "One of the fields is too long." in error
     injected = client.get(f"/analyses/{run_id}/report?msg=<script>alert(1)</script>").text
     assert "<script>alert(1)</script>" not in injected
-    assert "Business mapping saved." in client.get("/mappings?msg=mapping_saved").text
 
 
-def test_status_page_and_dashboard_after_registry_writes(tmp_path):
+def test_status_page_and_dashboard_after_a_run(tmp_path):
     client = _sign_in(_client(tmp_path), APPROVER_TOKEN)
     run_id = _start(client, "DEMO.PKG_STATUS")
     status = client.get(f"/analyses/{run_id}/status").json()
     assert status["status"] == "completed" and status["run_id"] == run_id
     assert client.get(f"/analyses/{run_id}").status_code == 200
-    assert _msg(_post(client, "/mappings", object="DEMO.PKG_STATUS", application="HR", business_process="Status", criticality="low")) == "mapping_saved"
     dashboard = client.get("/").text
     assert run_id in dashboard and "_registry" not in dashboard
 
@@ -158,8 +151,6 @@ def test_records_survive_an_application_restart(tmp_path):
     run_id = _start(client, "DEMO.PKG_BILLING")
     report = client.get(f"/analyses/{run_id}/export?format=json").json()
     assert _msg(_post(client, f"/analyses/{run_id}/approval", decision="on_hold", notes="Blockers remain.", actor_name="Dana")) == "approval_saved"
-    assert _msg(_post(client, f"/analyses/{run_id}/manifest", object_key="DEMO.PKG_BILLING:PACKAGE BODY", change_ref="CHG-9")) == "manifest_saved"
-    assert _msg(_post(client, "/mappings", object="DEMO.PKG_BILLING", application="Billing", business_process="Invoicing", criticality="critical")) == "mapping_saved"
 
     restarted = _sign_in(TestClient(create_app(settings(tmp_path, approver_access_token=APPROVER_TOKEN))))
     review = _review(restarted, run_id)
@@ -167,9 +158,9 @@ def test_records_survive_an_application_restart(tmp_path):
     assert review["approval"]["latest"]["decision"] == "on_hold"
     assert review["approval"]["latest"]["actor"]["name"] == "Dana"
     page = restarted.get(f"/analyses/{run_id}/report?tab=details").text
-    assert "CHG-9" in restarted.get(f"/analyses/{run_id}/report?tab=objects").text
     assert "Dana" in page
-    assert "Invoicing" in restarted.get("/mappings").text
+    assert restarted.get("/registry").status_code == 404
+    assert restarted.get("/mappings").status_code == 404
 
 
 def test_policy_file_can_mark_blockers_as_tests_and_they_stay_open(tmp_path):

@@ -14,7 +14,7 @@ browser → controllers → AnalysisService
                       (agentic mode: investigator.gather → live allowlisted tools → RecordedReads,
                        then the same scorers read from ReplayGateway)
                       → RunStore and HTML / PDF / JSON renderers
-        controllers → DecisionService → readiness, change classification, history, business impact
+        controllers → DecisionService → readiness, change classification, history
                                       → ReviewStore (runs/<id>/review.json), Registry (_registry/*.json)
 ```
 
@@ -63,20 +63,14 @@ Each rule has a resolution:
 Readiness is evaluated each time the report is viewed:
 
 1. **Indeterminate** when the run did not complete, coverage is missing (1.0 reports) or has inaccessible or failed objects, a newer run of the same packages exists, or the snapshot is older than `OIA_SNAPSHOT_STALE_HOURS`.
-2. **Deployment on hold** when any blocker, required validation, or unexpected drift is unresolved. Required validations stay unresolved for the life of the report.
+2. **Deployment on hold** when any blocker or required validation is unresolved. Required validations stay unresolved for the life of the report.
 3. **Deployment recommended** when none of those remain. Human approval is still required, and is recorded separately.
 
 The investigator cannot change any input to this evaluation.
 
-### Planned change, unexpected drift, unclassified
+### Object differences
 
-`services/change_classification.py` compares each object's checksums with the registry:
-
-- **Planned**: the Test checksum equals the checksum pinned by an approved manifest entry.
-- **Unexpected drift**: Production no longer matches its active trusted baseline, or Test no longer matches the checksum pinned when the change was approved. Drift in Production that Test does not share is flagged production-only.
-- **Unclassified**: any other difference. Being in Test does not make a change planned.
-
-Baseline states are available, partial, outdated (older than `OIA_BASELINE_MAX_AGE_DAYS`), unavailable, and not recorded (1.0 reports). Drift holds deployment; unclassified changes do not (see `docs/decisions.md`).
+`services/change_classification.py` builds one row per in-scope object from the captured checksums and the diff state (modified, created, deleted, formatting, unchanged, absent, unreadable). It counts the rows for the Changes tab legend. There is no record of approved changes, so a difference is never labelled planned or drift.
 
 ### Compilation readiness
 
@@ -90,12 +84,16 @@ Baseline states are available, partial, outdated (older than `OIA_BASELINE_MAX_A
 
 The denominator is every specification and body of each selected package. Object coverage (analyzed, partial, skipped, inaccessible, failed) is reported separately from dependency coverage (dictionary edges, source-scan edges, unresolved references, and external callers that cannot be seen).
 
+### Environment names
+
+`OIA_TEST_ORACLE_LABEL` and `OIA_PROD_ORACLE_LABEL` are display labels for the database each side points at, not role names, and people sometimes set the same label for both (a local setup pointing Test and Production at one database). Prose about an environment therefore always names the role, `Test` or `Production`, and adds the label only when the two labels differ — `Production (FINPRD)`. `analysis/environments.py` owns this rule, so a finding never says something like "is INVALID in LOCAL but VALID in LOCAL".
+
 ### Records and roles
 
 - `runs/<id>/review.json` (`ReviewStore`): approval decisions and an append-only event list. Validation results and reviewer decisions are not recorded. Older files may still contain those sections; they are not used.
-- `<OIA_STATE_DIR or runs/_registry>/` (`Registry`): `baselines.json`, `manifest.json`, `mappings.json`, `versions.json` (object checksum history per run), and `events.json`.
+- `<OIA_STATE_DIR or runs/_registry>/` (`Registry`): `versions.json` (object checksum history per run).
 
-The report and the email are what developers and support staff receive. Approvers (`OIA_APPROVER_ACCESS_TOKEN`) record approval decisions, trusted baselines, manifest entries, and business mappings. Approval as "approved" is rejected unless readiness is Deployment recommended. Every record carries the role and a self-declared name, because development sign-in does not identify a person.
+The report and the email are what developers and support staff receive. Approvers (`OIA_APPROVER_ACCESS_TOKEN`) record approval decisions. Approval as "approved" is rejected unless readiness is Deployment recommended. Every record carries the role and a self-declared name, because development sign-in does not identify a person.
 
 ### History
 

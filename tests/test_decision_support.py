@@ -1,4 +1,4 @@
-"""Review, validation, approval, baseline, manifest, and mapping workflows over HTTP."""
+"""Review, validation, approval, baseline, and manifest workflows over HTTP."""
 
 import io
 import re
@@ -105,33 +105,40 @@ def test_report_does_not_record_validation_or_review(tmp_path):
     assert all(entry["state"] == "unresolved" for entry in after["readiness"]["validations"])
 
 
-def test_manifest_and_baseline_need_an_approver_and_drive_classification(tmp_path):
-    analyst = _client(tmp_path)
-    _sign_in(analyst, "test-token")
-    run_id = _start(analyst, "DEMO.PKG_STATUS")
+def test_trust_record_endpoints_and_page_are_gone(tmp_path):
+    client = _client(tmp_path)
+    _sign_in(client, APPROVER_TOKEN)
+    run_id = _start(client, "DEMO.PKG_STATUS")
     body = "DEMO.PKG_STATUS:PACKAGE BODY"
-    assert _post(analyst, f"/analyses/{run_id}/manifest", object_key=body, change_ref="CHG-7") == "approver_required"
-    assert _review(analyst, run_id)["classification"]["counts"]["planned"] == 0
-
-    approver = _client(tmp_path)
-    _sign_in(approver, APPROVER_TOKEN)
-    assert _post(approver, f"/analyses/{run_id}/manifest", object_key=body, change_ref="") == "change_ref_required"
-    assert _post(approver, f"/analyses/{run_id}/manifest", object_key="DEMO.OTHER:PACKAGE", change_ref="CHG-7") == "unknown_object"
-    assert _post(approver, f"/analyses/{run_id}/manifest", object_key=body, change_ref="CHG-7") == "manifest_saved"
-    assert _post(approver, f"/analyses/{run_id}/baseline", environment="production", object_key="all", note="Release 12") == "baseline_saved"
-    classification = _review(approver, run_id)["classification"]
-    assert classification["counts"]["planned"] == 1 and classification["counts"]["unclassified"] == 1
-    assert classification["baseline_state"] == "available"
-    page = approver.get(f"/analyses/{run_id}/report?tab=objects").text
-    assert "CHG-7" in page and "Planned change" in page
-
-    entry = next(item for item in approver.app.state.registry.manifest() if item.get("change_ref") == "CHG-7")
-    assert _post(approver, f"/registry/manifest/{entry['id']}/withdraw", run_id=run_id, reason="") == "reason_required"
-    assert _post(approver, f"/registry/manifest/{entry['id']}/withdraw", run_id=run_id, reason="Superseded") == "manifest_withdrawn"
-    assert _review(approver, run_id)["classification"]["counts"]["planned"] == 0
+    csrf = _csrf(client)
+    for path in (
+        f"/analyses/{run_id}/baseline",
+        f"/analyses/{run_id}/manifest",
+        "/registry/baselines/B-1/clear",
+        "/registry/manifest/M-1/withdraw",
+    ):
+        response = client.post(path, data={"csrf_token_value": csrf, "object_key": body, "note": "x"}, follow_redirects=False)
+        assert response.status_code == 404
+    assert client.get("/registry", follow_redirects=False).status_code == 404
+    page = client.get("/").text
+    assert "Trust records" not in page
+    assert "approver-tools" not in client.get(f"/analyses/{run_id}/report?tab=objects").text
 
 
-def test_production_change_after_baseline_is_drift_and_older_run_is_superseded(tmp_path):
+def test_report_names_test_and_production_when_both_labels_are_the_same(tmp_path):
+    """Both environments can be labelled LOCAL; the page must still distinguish them."""
+    client = _client(tmp_path, test_oracle_label="LOCAL", prod_oracle_label="LOCAL")
+    _sign_in(client, "test-token")
+    run_id = _start(client, "DEMO.PKG_BILLING")
+    findings = client.get(f"/analyses/{run_id}/report?tab=findings").text
+    assert "is INVALID in Test but VALID in Production" in findings
+    for tab in ("overview", "findings", "objects", "details"):
+        page = client.get(f"/analyses/{run_id}/report?tab={tab}").text
+        assert "LOCAL" not in page, tab
+    assert "Test" in client.get(f"/analyses/{run_id}/report?tab=objects").text
+
+
+def test_newer_run_supersedes_an_older_run(tmp_path):
     test_catalog, prod_catalog = build_demo_catalogs()
     application = create_app(
         settings(tmp_path, approver_access_token=APPROVER_TOKEN),
@@ -141,47 +148,19 @@ def test_production_change_after_baseline_is_drift_and_older_run_is_superseded(t
     client = TestClient(application)
     _sign_in(client, APPROVER_TOKEN)
     first = _start(client, "DEMO.PKG_STATUS")
-    assert _post(client, f"/analyses/{first}/baseline", environment="production", object_key="all", note="Release 12") == "baseline_saved"
     body = prod_catalog.sources[("DEMO", "PKG_STATUS", "PACKAGE BODY")]
     prod_catalog.add_source("DEMO", "PKG_STATUS", "PACKAGE BODY", body + "\n-- hotfix applied directly\n")
     second = _start(client, "DEMO.PKG_STATUS")
 
     latest = _review(client, second)
-    assert latest["classification"]["counts"]["unexpected_drift"] == 1
-    assert latest["classification"]["production_only"] == 1
-    assert latest["readiness"]["decision"] == "on_hold" and latest["readiness"]["open_drift"] == 1
+    assert latest["readiness"]["decision"] != "indeterminate"
+    assert "open_drift" not in latest["readiness"]
     older = _review(client, first)
     assert older["readiness"]["decision"] == "indeterminate"
     page = client.get(f"/analyses/{second}/report").text
-    assert "Unexpected drift" in page
+    assert "Unexpected drift" not in page
     audit = client.get(f"/analyses/{second}/report?tab=details").text
     assert first in audit
-
-
-def test_business_mappings_are_maintained_by_approvers_and_shown_in_reports(tmp_path):
-    analyst = _client(tmp_path)
-    _sign_in(analyst, "test-token")
-    run_id = _start(analyst, "DEMO.PKG_BILLING")
-    assert "Business impact not established" in analyst.get(f"/analyses/{run_id}/report").text
-    page = analyst.get("/mappings").text
-    assert "Sign in with the approver access token" in page and 'action="/mappings"' not in page
-    fields = {"object": "DEMO.PKG_BILLING", "application": "Billing portal", "business_process": "Monthly invoicing", "criticality": "high"}
-    response = analyst.post("/mappings", data={**fields, "csrf_token_value": _csrf(analyst)}, follow_redirects=False)
-    assert response.headers["location"].endswith("msg=approver_required")
-
-    approver = _client(tmp_path)
-    _sign_in(approver, APPROVER_TOKEN)
-    bad = approver.post("/mappings", data={**fields, "object": "not an object", "csrf_token_value": _csrf(approver)}, follow_redirects=False)
-    assert bad.headers["location"].endswith("msg=invalid_object")
-    saved = approver.post("/mappings", data={**fields, "csrf_token_value": _csrf(approver)}, follow_redirects=True)
-    assert "Business mapping saved." in saved.text and "Monthly invoicing" in saved.text
-    report = approver.get(f"/analyses/{run_id}/report").text
-    assert "Billing portal" in report and "Monthly invoicing" in report
-
-    mapping_id = approver.app.state.registry.mappings()[0]["id"]
-    retired = approver.post(f"/mappings/{mapping_id}/retire", data={"csrf_token_value": _csrf(approver)}, follow_redirects=True)
-    assert "Business mapping retired." in retired.text
-    assert "Business impact not established" in approver.get(f"/analyses/{run_id}/report").text
 
 
 def test_legacy_session_cookie_is_still_accepted_as_analyst(tmp_path):

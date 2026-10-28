@@ -546,6 +546,10 @@ th { color: var(--muted); font-weight: 650; white-space: nowrap; }
 .field input, .field select { padding: 7px 10px; font-size: 0.9rem; }
 .field-grow { flex: 1 1 220px; }
 .check { display: inline-flex; align-items: center; gap: 6px; font-size: 0.9rem; padding-bottom: 8px; }
+.check.is-disabled { opacity: 0.6; cursor: not-allowed; }
+.check.is-disabled input { cursor: not-allowed; }
+.hint-warn { color: var(--amber); display: flex; align-items: flex-start; gap: var(--s2); margin-top: 0; }
+.hint-warn .icon { margin-top: 2px; }
 .result-count { margin: var(--s2) 0; font-size: 0.88rem; font-weight: 600; }
 .findings-table { background: white; border: 1px solid var(--line); border-radius: var(--radius); border-collapse: separate; border-spacing: 0; overflow: hidden; }
 .findings-table td:first-child { white-space: nowrap; }

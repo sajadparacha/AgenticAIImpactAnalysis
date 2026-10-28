@@ -1,6 +1,6 @@
 # Report redesign: implementation notes
 
-The report is a deployment decision-support page. The analyzer recommendation and export formats are unchanged; readiness, classification, coverage, compilation, transaction impact, business impact, validation tracking, approval, and history were added. See `docs/architecture.md` for the rules behind each state.
+The report is a deployment decision-support page. The analyzer recommendation and export formats are unchanged; readiness, classification, coverage, compilation, transaction impact, validation tracking, approval, and history were added. See `docs/architecture.md` for the rules behind each state.
 
 ## Where the data comes from
 
@@ -17,7 +17,7 @@ Every value on the page is read from `runs/<id>/report.json`, `status.json`, `re
 | Findings explorer | `report.findings` with `rule_id`, `fingerprint`, `severity_rationale`, evidence class, policy item, validation and review state |
 | Changed objects | `report.object_states`, classification, manifest, baselines, compilation, transaction profiles |
 | Source comparison | `report.diffs` for Test to Production |
-| Dependencies | `report.dependency_edges` (provenance dictionary, source scan, unresolved), impact path tree, business mappings |
+| Dependencies | `report.dependency_edges` (provenance dictionary, source scan, unresolved), impact path tree |
 | Validation and approval | Policy items, review records, approval history, coverage, external checks, performance status |
 | Audit trail | Phase and tool-call times, review and registry events, approval history, run history and comparison |
 
@@ -25,15 +25,11 @@ Every value on the page is read from `runs/<id>/report.json`, `status.json`, `re
 
 Deterministic verified, AI interpretation, unverified hypothesis, test-validated (a passed validation is recorded), and human-reviewed (a reviewer decision is recorded). Investigator output can only be AI interpretation or unverified hypothesis.
 
-## Business impact
-
-Confirmed (a mapped object has a confirmed finding), Potential, "No impact identified within analyzed scope", and Not analyzed. Objects without a mapping show "Business impact not established". Mappings are maintained at `/mappings` by approvers.
-
 ## URL contract
 
 `/analyses/<id>/report` accepts `tab`, `finding`, `object` (`OWNER.NAME:OBJECT TYPE`), `line`, `side` (`t` or `p`), and `msg` (a fixed action message code). The five current tab keys are `overview`, `findings`, `objects`, `dependencies`, and `details`. The old keys `source`, `validation`, and `audit` still work and map to `objects`, `details`, and `details` respectively (`LEGACY_TABS` in `services/report_view.py`). Unknown values fall back to defaults; a request with an `object` parameter and no tab opens `objects`. Filter and sort state is kept in the URL by the script: findings `q`, `sev`, `type`, `cat`, `src`, `ev`, `ec` (evidence class), `val` (validation state), `blk` (blocking), `env`, `chg` (change type), `drivers`, `sort`; dependencies `dq`, `dir`, `impact`; edges `eq`, `edir`, `eprov`, `etype`. The fragments `#changes`, `#comparison`, `#dependencies`, `#ai`, `#risk`, `#limitations`, `#issue-<id>`, `#objects`, `#compilation`, `#transactions`, `#coverage`, `#approval`, `#regression-tests`, `#performance`, and `#history` resolve to their tab.
 
-The single analysis form on `/` posts `packages` and an optional `investigate` field to `POST /analyses`. Setting `investigate=1` starts an agentic run (`create_run(..., mode=AGENTIC)`); omitting it runs the deterministic checks only. `GET /agentic` returns a 303 to `/?investigate=1`, and `POST /agentic/analyses` still works for backward compatibility. Trust records live at `GET /registry`, which is linked from the top navigation next to Business mappings.
+The single analysis form on `/` posts `packages` and an optional `investigate` field to `POST /analyses`. Setting `investigate=1` starts an agentic run (`create_run(..., mode=AGENTIC)`); omitting it runs the deterministic checks only. `GET /agentic` returns a 303 to `/?investigate=1`, and `POST /agentic/analyses` still works for backward compatibility. Trust records live at `GET /registry`, which is linked from the top navigation.
 
 Export links (`?format=html|pdf|json`) are unchanged. The HTML and PDF exports render every panel and finding detail, without forms. The fpdf2 PDF fallback adds the readiness decision, the four states, the hold reasons, coverage, and compilation.
 
@@ -49,7 +45,6 @@ Export links (`?format=html|pdf|json`) are unchanged. The HTML and PDF exports r
 | `POST /analyses/{id}/manifest` | Approver | Pin the captured Test checksum under a change reference |
 | `POST /registry/manifest/{entry}/withdraw` | Approver | Withdraw a manifest entry with a reason |
 | `POST /registry/baselines/{entry}/clear` | Approver | Clear a trusted baseline with a reason |
-| `GET /mappings`, `POST /mappings`, `POST /mappings/{id}/retire` | View: signed in; change: approver | Business process mappings |
 
 All POST routes require the CSRF token and redirect back with `?msg=<code>`.
 

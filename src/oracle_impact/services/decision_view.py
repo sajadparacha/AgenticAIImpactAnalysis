@@ -7,8 +7,6 @@ not recorded rather than filled in.
 
 from oracle_impact.analysis.compilation import missing_errors_text
 from oracle_impact.models.report import Report
-from oracle_impact.services.change_classification import LABELS as CLASS_LABELS
-from oracle_impact.services.change_classification import TONES as CLASS_TONES
 from oracle_impact.services.readiness import (
     FIX_AND_REANALYZE,
     INDETERMINATE,
@@ -74,26 +72,23 @@ def apply_decision(view: dict, report: Report, ctx: dict) -> None:
     view["decision"] = {
         "readiness": readiness,
         "hold_rows": hold,
-        "next_actions": _next_actions(view, readiness, classification, approval, coverage),
+        "next_actions": _next_actions(view, readiness, approval, coverage),
         "states": _states(report, readiness, coverage, view["human_decision"]),
-        "primary": _primary(classification, readiness, coverage),
-        "secondary": _secondary(report, classification, readiness, coverage, ctx),
         "policy_computed_now": ctx["policy_computed_now"],
         "policy_version": readiness["policy_version"],
         "resolutions": RESOLUTIONS,
     }
     view["classification"] = classification
     view["objects"] = _objects(report, view, classification, labels)
-    view["measures"] = _measures(view, classification, readiness, coverage)
+    view["change_counts"] = _change_counts(view["objects"])
+    view["measures"] = _measures(view, readiness, coverage)
     view["coverage"] = coverage
     view["compilation"] = _compilation(report, labels)
     view["transactions"] = _transactions(report, view)
     view["performance"] = _performance(report)
-    view["business"] = ctx["business"]
     view["review"] = _review(view, review, readiness)
     view["approval"] = {**approval, "labels": APPROVAL_LABELS}
     view["history"] = _history(ctx["history"])
-    view["registry"] = {"baselines": ctx["baselines"], "manifest": ctx["manifest"], "events": ctx["registry_events"]}
     view["edges"] = _edges(report, view, labels)
     view["dep_tree"] = _dep_tree(report, view["edges"])
     view["external_checks"] = [item.model_dump() for item in report.external_checks]
@@ -170,8 +165,6 @@ def _decorate_row(row: dict, items: dict, by_object: dict, labels: dict) -> None
             "environment_label": labels.get(environment, environment.capitalize()),
             "change_type": obj["change_type"] if obj else "",
             "change_type_label": CHANGE_TYPE_LABELS.get(obj["change_type"], "") if obj else "Not an in-scope object",
-            "classification": obj["classification"] if obj else "",
-            "classification_label": obj["label"] if obj else "",
             "rule_id": finding.rule_id,
             "fingerprint": finding.fingerprint,
             "severity_rationale": finding.severity_rationale,
@@ -234,31 +227,6 @@ def _hold_rows(view: dict, readiness: dict, items: dict) -> list[dict]:
                 "action": item.required_action,
                 "resolution": RESOLUTIONS.get(item.resolution, ""),
                 "fix_required": item.resolution == FIX_AND_REANALYZE,
-            }
-        )
-    for entry in readiness["drift"]:
-        if entry["accepted"]:
-            continue
-        hold.append(
-            {
-                "kind": "drift",
-                "finding_id": "",
-                "rule_id": "DRIFT",
-                "title": "Unexpected drift",
-                "headline": " ".join(entry["reasons"]) or "Checksum contradicts a recorded baseline or approval.",
-                "object": entry["qualified"],
-                "object_type": entry["object_type"],
-                "level": "",
-                "level_label": "",
-                "evidence_status": "confirmed",
-                "evidence_label": "Checksum comparison",
-                "state": "unresolved",
-                "state_label": "Unresolved",
-                "state_reason": "",
-                "action": "Find out who changed the object and why. Then set a new trusted baseline or record the approved change.",
-                "resolution": "An approver updates the baseline or the change manifest after investigation.",
-                "fix_required": False,
-                "key": entry["key"],
             }
         )
     return hold
@@ -343,7 +311,7 @@ def _verdict(readiness: dict, human: dict) -> dict:
     }
 
 
-def _measures(view: dict, classification: dict, readiness: dict, coverage: dict) -> list[dict]:
+def _measures(view: dict, readiness: dict, coverage: dict) -> list[dict]:
     metrics = view["metrics"]
     changed = sum(1 for item in view["objects"] if item["change_type"] not in {"unchanged", "absent"})
     affected = sum(1 for dep in view["dependencies"] if dep["impact"] == "Affected")
@@ -422,73 +390,7 @@ def _states(report: Report, readiness: dict, coverage: dict, human: dict) -> lis
     ]
 
 
-def _primary(classification: dict, readiness: dict, coverage: dict) -> list[dict]:
-    counts = classification["counts"]
-    recorded = classification["recorded"]
-    return [
-        {
-            "label": "Planned changes",
-            "value": counts["planned"] if recorded else None,
-            "note": "Test matches an approved, checksum-pinned change." if recorded else "Not recorded in this report version.",
-            "tab": "objects",
-            "tone": "success" if counts["planned"] else "neutral",
-        },
-        {
-            "label": "Unexpected drift",
-            "value": counts["unexpected_drift"] if recorded else None,
-            "note": (
-                f"{classification['production_only']} production-only" if classification["production_only"] else classification["baseline_note"]
-            )
-            if recorded
-            else "Not recorded in this report version.",
-            "caveat": (
-                {
-                    "unavailable": "Production-only drift was not checked.",
-                    "partial": "Only partly checked.",
-                    "outdated": "Checked against an outdated baseline.",
-                }.get(classification["baseline_state"], "")
-                if recorded
-                else ""
-            ),
-            "tab": "objects",
-            "tone": "danger" if counts["unexpected_drift"] else "warning" if classification["baseline_state"] in {"unavailable", "partial", "outdated"} else "neutral",
-        },
-        {
-            "label": "Blocking issues",
-            "value": readiness["open_blockers"],
-            "note": f"{len(readiness['blockers'])} raised by policy, {len(readiness['blockers']) - readiness['open_blockers']} resolved.",
-            "tab": "details",
-            "tone": "danger" if readiness["open_blockers"] else "success",
-        },
-        {
-            "label": "Analysis coverage",
-            "value": f"{coverage['analyzed']} of {coverage['in_scope']}" if coverage["recorded"] else None,
-            "note": f"In-scope objects fully analyzed ({coverage['denominator']})." if coverage["recorded"] else "Not recorded in this report version.",
-            "tab": "details",
-            "tone": "success" if coverage.get("complete") else "warning",
-        },
-    ]
-
-
-def _secondary(report: Report, classification: dict, readiness: dict, coverage: dict, ctx: dict) -> list[dict]:
-    compile_invalid = 0
-    if report.compilation is not None:
-        compile_invalid = sum(1 for item in report.compilation.objects if item.environment == "test" and item.status != "VALID")
-    items = [
-        {"label": "Unclassified changes", "value": classification["counts"]["unclassified"] if classification["recorded"] else None},
-        {"label": "Open validations", "value": readiness["open_validations"]},
-        {
-            "label": "Invalid objects in Test",
-            "value": compile_invalid if report.compilation is not None and report.compilation.evaluated else None,
-        },
-        {"label": "Dynamic SQL to verify", "value": len(coverage.get("dynamic_sql", [])) if coverage["recorded"] else None},
-        {"label": "Snapshot age", "value": ctx["history"]["age"]},
-        {"label": "Baseline", "value": classification["baseline_state"].replace("_", " ").capitalize()},
-    ]
-    return items
-
-
-def _next_actions(view: dict, readiness: dict, classification: dict, approval: dict, coverage: dict) -> list[dict]:
+def _next_actions(view: dict, readiness: dict, approval: dict, coverage: dict) -> list[dict]:
     actions = []
     for reason in readiness["indeterminate_reasons"]:
         actions.append({"text": reason, "tab": "overview", "kind": "indeterminate"})
@@ -510,24 +412,31 @@ def _next_actions(view: dict, readiness: dict, classification: dict, approval: d
                 "kind": "validation",
             }
         )
-    if readiness["open_drift"]:
-        actions.append(
-            {"text": f"Investigate {readiness['open_drift']} object{'s' if readiness['open_drift'] != 1 else ''} with unexpected drift.", "tab": "objects", "kind": "drift"}
-        )
-    unclassified = classification["counts"].get("unclassified", 0)
-    if unclassified:
-        actions.append(
-            {
-                "text": f"Confirm {unclassified} unclassified change{'s' if unclassified != 1 else ''}: record the approved change, or find out why Test differs.",
-                "tab": "objects",
-                "kind": "classify",
-            }
-        )
-    if classification["recorded"] and classification["baseline_state"] in {"unavailable", "partial", "outdated"}:
-        actions.append({"text": classification["baseline_note"], "tab": "objects", "kind": "baseline"})
     if readiness["decision"] == RECOMMENDED and approval["latest"] is None:
         actions.append({"text": "Record the human deployment decision.", "tab": "overview", "kind": "approval"})
     return actions
+
+
+CHANGE_TYPE_TONES = {
+    "modified": "warning",
+    "created": "warning",
+    "deleted": "danger",
+    "formatting": "neutral",
+    "unchanged": "neutral",
+    "absent": "neutral",
+    "unknown": "danger",
+}
+
+
+def _change_counts(objects: list[dict]) -> list[dict]:
+    counts: dict[str, int] = {}
+    for item in objects:
+        counts[item["change_type"]] = counts.get(item["change_type"], 0) + 1
+    return [
+        {"key": key, "label": label, "count": counts[key], "tone": CHANGE_TYPE_TONES[key]}
+        for key, label in CHANGE_TYPE_LABELS.items()
+        if counts.get(key)
+    ]
 
 
 def _objects(report: Report, view: dict, classification: dict, labels: dict) -> list[dict]:
@@ -578,11 +487,6 @@ def _objects(report: Report, view: dict, classification: dict, labels: dict) -> 
                     "object_type": diff["object_type"],
                     "change_type": "modified" if diff["state"] not in {"unchanged", "formatting"} else diff["state"],
                     "change_label": diff["state_label"],
-                    "classification": "unknown",
-                    "label": CLASS_LABELS["unknown"],
-                    "tone": CLASS_TONES["unknown"],
-                    "reasons": ["This report version did not record per-environment checksums, so the change cannot be classified."],
-                    "production_only": False,
                     "hashes": {},
                     "envs": [],
                     "findings": len(diff["findings"]),
@@ -590,8 +494,6 @@ def _objects(report: Report, view: dict, classification: dict, labels: dict) -> 
                     "diff_key": diff["key"],
                     "added": diff["added"],
                     "removed": diff["removed"],
-                    "manifest": None,
-                    "baseline": {"state": "not_recorded", "entry": None},
                 }
             )
     return rows

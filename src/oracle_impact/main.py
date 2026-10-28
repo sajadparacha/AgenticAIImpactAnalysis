@@ -72,9 +72,8 @@ def create_app(
     app = FastAPI(title="Oracle AI Impact Analysis", docs_url=None, redoc_url=None)
     app.state.settings = settings
     app.state.store = store
-    app.state.registry = registry
     app.state.reviews = ReviewStore(store)
-    app.state.decisions = DecisionService(settings, store, registry, app.state.reviews)
+    app.state.decisions = DecisionService(settings, store, app.state.reviews)
     app.state.service = service
     app.state.background = background or enqueue
     install_routes(app)

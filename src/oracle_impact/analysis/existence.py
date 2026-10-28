@@ -5,6 +5,7 @@ that only the Test version references is looked up in Production's ALL_OBJECTS.
 If it is absent, the deployed body cannot compile or resolve it there.
 """
 
+from oracle_impact.analysis.environments import environment_name
 from oracle_impact.analysis.hashing import finding_id
 from oracle_impact.models.enums import Confidence, EvidenceStatus, Severity
 from oracle_impact.models.report import Finding
@@ -37,7 +38,7 @@ def existence_findings(run_id: str, candidates, gateway, labels: dict[str, str],
     reader = getattr(gateway, "fetch_object_status", None)
     if reader is None:
         return []
-    production = labels.get("production", "Production")
+    production = environment_name("production", labels)
     findings: list[Finding] = []
     for owner, name, object_type, dependent in candidates:
         qualified = f"{owner}.{name}"

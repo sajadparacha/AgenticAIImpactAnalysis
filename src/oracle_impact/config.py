@@ -40,7 +40,6 @@ class Settings(BaseSettings):
     approver_access_token: str = ""
     state_dir: Path | None = None
     policy_file: Path | None = None
-    baseline_max_age_days: int = 30
     snapshot_stale_hours: int = 24
     performance_plan_source: str = "none"
 

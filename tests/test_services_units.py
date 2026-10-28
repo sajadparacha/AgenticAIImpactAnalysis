@@ -12,12 +12,10 @@ from oracle_impact.fixtures.demo_catalog import build_demo_catalogs
 from oracle_impact.infrastructure.oracle.gateway import Catalog, FixtureGateway, OracleUnavailable
 from oracle_impact.infrastructure.oracle.oracledb_gateway import OracledbGateway
 from oracle_impact.infrastructure.oracle.queries import QUERIES, SESSION_SQL, apply_dictionary_views
-from oracle_impact.infrastructure.storage.registry import Registry
 from oracle_impact.infrastructure.storage.review_store import ReviewStore
 from oracle_impact.infrastructure.storage.run_store import RunStore
 from oracle_impact.models.assessment import PolicyItem
 from oracle_impact.models.domain import PackageRef
-from oracle_impact.models.enums import EvidenceStatus
 from oracle_impact.security import (
     _sign,
     csrf_token,
@@ -28,7 +26,6 @@ from oracle_impact.security import (
     token_matches,
 )
 from oracle_impact.services import readiness
-from oracle_impact.services.business_impact import business_impact
 from oracle_impact.services.decision_service import ActionError, DecisionService, actor, offline_context
 from oracle_impact.services.history import age_text, previous_run, related_runs, stale_reason, superseded_by
 from oracle_impact.services.report_view import initial_state
@@ -48,7 +45,7 @@ def _service(tmp_path, **overrides) -> DecisionService:
     overrides.setdefault("approver_access_token", "approver-token")
     configured = settings(tmp_path, **overrides)
     store = RunStore(tmp_path)
-    return DecisionService(configured, store, Registry(configured.registry_dir), ReviewStore(store))
+    return DecisionService(configured, store, ReviewStore(store))
 
 
 def _code(call) -> str:
@@ -92,48 +89,15 @@ def test_approving_a_held_report_is_refused(tmp_path):
     assert service.record_approval(report, {"decision": "rejected", "notes": "Blockers."}, APPROVER)["readiness"] == "on_hold"
 
 
-def test_baseline_and_manifest_input_rules(tmp_path):
+def test_context_records_only_object_differences(tmp_path):
     report = _demo(tmp_path, "DEMO.PKG_BILLING")
     service = _service(tmp_path)
-    key = "DEMO.PKG_BILLING:PACKAGE BODY"
-    assert _code(lambda: service.set_baseline(report, {"environment": "production", "object_key": key, "note": "x"}, ANALYST)) == "approver_required"
-    assert _code(lambda: service.set_baseline(report, {"environment": "test", "object_key": key, "note": "x"}, APPROVER)) == "invalid_environment"
-    assert _code(lambda: service.set_baseline(report, {"environment": "production", "object_key": key, "note": ""}, APPROVER)) == "reason_required"
-    assert _code(lambda: service.set_baseline(report, {"environment": "production", "object_key": "X.Y:PACKAGE", "note": "x"}, APPROVER)) == "unknown_object"
-    assert _code(lambda: service.set_baseline(report, {"environment": "autumn", "object_key": "all", "note": "x"}, APPROVER)) == "invalid_environment"
-    recorded = service.set_baseline(report, {"environment": "production", "object_key": "all", "note": "Release 12"}, APPROVER)
-    assert {item["object_type"] for item in recorded} == {"PACKAGE", "PACKAGE BODY"}
-    assert all(item["source_run"] == report.run_id and item["sha256"] for item in recorded)
-
-    assert _code(lambda: service.approve_manifest(report, {"object_key": key, "change_ref": ""}, APPROVER)) == "change_ref_required"
-    assert _code(lambda: service.approve_manifest(report, {"object_key": "X.Y:PACKAGE", "change_ref": "CHG-1"}, APPROVER)) == "unknown_object"
-    entry = service.approve_manifest(report, {"object_key": key, "change_ref": "CHG-1"}, APPROVER)
-    assert entry["change_kind"] == "create_or_modify" and entry["status"] == "approved"
-
-    assert _code(lambda: service.withdraw_manifest(entry["id"], {"reason": ""}, APPROVER)) == "reason_required"
-    assert _code(lambda: service.withdraw_manifest("M-NOPE", {"reason": "x"}, APPROVER)) == "unknown_record"
-    assert _code(lambda: service.clear_baseline("B-NOPE", {"reason": "x"}, APPROVER)) == "unknown_record"
-    service.clear_baseline(recorded[0]["id"], {"reason": "Wrong"}, APPROVER)
-
     context = service.context(report)
-    assert sorted(item["status"] for item in context["baselines"]) == ["active", "cleared"]
-    assert len(context["manifest"]) == 1
-    assert {event["action"] for event in context["registry_events"]} == {"baseline.set", "manifest.approve"}
-
-
-def test_mapping_input_rules(tmp_path):
-    service = _service(tmp_path)
-    form = {"object": " DEMO.PKG_BILLING ", "application": "Billing", "business_process": "Invoicing", "criticality": "high"}
-    assert _code(lambda: service.add_mapping(form, ANALYST)) == "approver_required"
-    assert _code(lambda: service.add_mapping({**form, "object": "demo.pkg_billing"}, APPROVER)) == "invalid_object"
-    assert _code(lambda: service.add_mapping({**form, "object": "A.B C.D"}, APPROVER)) == "invalid_object"
-    assert _code(lambda: service.add_mapping({**form, "object": "not valid!"}, APPROVER)) == "invalid_object"
-    assert _code(lambda: service.add_mapping({**form, "criticality": "extreme"}, APPROVER)) == "invalid_criticality"
-    assert _code(lambda: service.add_mapping({**form, "business_process": ""}, APPROVER)) == "mapping_fields_required"
-    saved = service.add_mapping(form, APPROVER)
-    assert (saved["owner"], saved["name"], saved["criticality"]) == ("DEMO", "PKG_BILLING", "high")
-    assert _code(lambda: service.retire_mapping("MAP-NOPE", APPROVER)) == "unknown_record"
-    service.retire_mapping(saved["id"], APPROVER)
+    assert context["classification"]["recorded"] is True
+    assert context["classification"]["changed"] >= 1
+    assert "drift_objects" not in context["classification"]
+    assert "open_drift" not in context["readiness"]
+    assert "registry" not in context
 
 
 def test_load_returns_none_for_unknown_or_unsafe_runs(tmp_path):
@@ -147,61 +111,6 @@ def test_offline_context_has_no_records_and_still_decides(tmp_path):
     context = offline_context(report)
     assert context["readiness"]["decision"] == "recommended"
     assert context["review"]["validations"] == [] and context["approval"]["latest"] is None
-
-
-# ----------------------------------------------------------------- business impact
-
-
-def _mapping(owner, name, criticality="medium", status="active"):
-    return {"id": f"MAP-{name}", "owner": owner, "name": name, "criticality": criticality, "status": status, "application": "App"}
-
-
-def test_business_impact_levels_follow_evidence_only(tmp_path):
-    report = _demo(tmp_path, "DEMO.PKG_BILLING")
-    mappings = [
-        _mapping("DEMO", "PKG_BILLING", "low"),
-        _mapping("DEMO", "PKG_LEGACY", "critical"),
-        _mapping("DEMO", "CUSTOMER_BILLS"),
-        _mapping("OTHER", "THING"),
-        _mapping("DEMO", "RETIRED", status="retired"),
-    ]
-    result = business_impact(report, mappings)
-    levels = {row["qualified"]: row["level"] for row in result["rows"] + result["not_analyzed"]}
-    assert levels == {
-        "DEMO.PKG_BILLING": "confirmed",
-        "DEMO.PKG_LEGACY": "confirmed",
-        "DEMO.CUSTOMER_BILLS": "none_identified",
-        "OTHER.THING": "not_analyzed",
-    }
-    assert [row["qualified"] for row in result["rows"]][:2] == ["DEMO.PKG_LEGACY", "DEMO.PKG_BILLING"]
-    assert result["counts"] == {"confirmed": 2, "potential": 0, "none_identified": 1, "not_analyzed": 1}
-    assert result["established"] is True
-    assert result["unmapped"] == []
-    assert business_impact(report, mappings[2:])["unmapped"] == ["DEMO.PKG_BILLING", "DEMO.PKG_LEGACY"]
-
-
-def test_business_impact_without_findings_is_potential_for_changed_objects(tmp_path):
-    report = _demo(tmp_path, "DEMO.PKG_BILLING").model_copy(update={"findings": []})
-    result = business_impact(report, [_mapping("DEMO", "PKG_BILLING")])
-    assert result["rows"][0]["level"] == "potential" and "changed in this change set" in result["rows"][0]["basis"]
-    nothing = business_impact(report, [])
-    assert nothing["established"] is False and nothing["unmapped"] == ["DEMO.PKG_BILLING"]
-
-
-def test_low_or_unconfirmed_findings_are_only_potential_impact(tmp_path):
-    report = _demo(tmp_path, "DEMO.PKG_STATUS")
-    row = business_impact(report, [_mapping("DEMO", "PKG_STATUS")])["rows"][0]
-    assert row["level"] == "potential" and row["tone"] == "warning"
-
-
-def test_investigator_findings_never_create_confirmed_business_impact(tmp_path):
-    report = _demo(tmp_path, "DEMO.PKG_STATUS")
-    claim = report.findings[0].model_copy(
-        update={"id": "F-AI", "origin": "investigator", "status": EvidenceStatus.CONFIRMED, "changed_object": "DEMO.PKG_DASHBOARD"}
-    )
-    report = report.model_copy(update={"findings": [*report.findings, claim]})
-    row = business_impact(report, [_mapping("DEMO", "PKG_DASHBOARD")])["rows"][0]
-    assert row["level"] == "none_identified"
 
 
 # ----------------------------------------------------------------- history

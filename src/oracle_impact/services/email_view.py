@@ -285,8 +285,6 @@ def _short_version(readiness: dict, blockers: int, checks: int) -> str:
         parts.append(f"{_count(blockers, 'blocking item')} that need a fix")
     if checks:
         parts.append(f"{_count(checks, 'item')} to test or justify")
-    if readiness.get("open_drift"):
-        parts.append(f"{_count(readiness['open_drift'], 'unexpected change')} to classify")
     found = ("There " + ("are " if _plural(parts) else "is ") + " and ".join(parts) + ".") if parts else ""
     if readiness["decision"] == INDETERMINATE:
         reasons = " ".join(readiness.get("indeterminate_reasons") or [])

@@ -415,19 +415,16 @@
     <summary><span class="section-title">Reviewer actions</span><span class="section-summary">{{ view.review.events | length }} recorded</span></summary>
     <div class="section-body">
       {% set events = view.review.events %}
-      {% if events or view.registry.events %}
+      {% if events %}
       <ol class="event-list">
         {% for event in events %}
         <li><span class="env-tag">{{ event.action }}</span> {{ event.at[:19] | replace('T', ' ') }} UTC · {{ event.actor.name }} (self-declared, {{ event.actor.role }}){% if event.finding_id %} · <a href="{{ ui.finding_href(view, event.finding_id) }}" data-open-finding="{{ event.finding_id }}">{{ event.finding_id }}</a>{% endif %}
           {% if event.detail.before is defined %}<span class="row-meta">Changed {% for key, value in event.detail.after.items() if event.detail.before.get(key) != value %}{{ key }}: {{ event.detail.before.get(key) or '—' }} → {{ value or '—' }}{{ '; ' if not loop.last }}{% endfor %}</span>{% endif %}
         </li>
         {% endfor %}
-        {% for event in view.registry.events | reverse %}
-        <li><span class="env-tag">{{ event.action }}</span> {{ event.at[:19] | replace('T', ' ') }} UTC · {{ event.actor.name }} (self-declared, {{ event.actor.role }}) · {{ event.detail.owner }}.{{ event.detail.name }} {{ (event.detail.object_type or '') | lower }}</li>
-        {% endfor %}
       </ol>
       {% else %}
-      <p class="empty">No approval, baseline, or manifest action has been recorded for this run.</p>
+      <p class="empty">No reviewer action has been recorded for this run.</p>
       {% endif %}
     </div>
   </details>

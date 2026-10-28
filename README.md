@@ -45,8 +45,8 @@ There is one analysis form on `/`. Python always performs the snapshot, diff, si
 Each report opens with a single verdict computed from the configurable blocking policy. The banner shows a friendly on-screen label — **Recommended, pending approval**, **On hold**, or **Can't decide yet** — above the readiness summary ("Human approval is still required."). The formal policy labels (**Deployment recommended**, **Deployment on hold**, **Indeterminate**) appear once in small text under the banner and remain the labels used by exports, email, and JSON. A recommendation is never an approval. The human decision is a small status chip next to the verdict; the report also shows the reasons deployment is on hold and the next actions.
 
 - The report and the email are read-only shares for developers and support. Test results are not recorded in the application; recommended tests are for the people who receive the report.
-- Approvers sign in with `OIA_APPROVER_ACCESS_TOKEN` (it must differ from the app token). They record the deployment decision from the verdict banner, and manage trusted Production baselines and approved changes (a manifest that pins the Test checksum) at the **Trust records** page (`/registry`). Business process mappings are maintained at `/mappings`.
-- Changes are classified as planned, unexpected drift, or unclassified against those records.
+- Approvers sign in with `OIA_APPROVER_ACCESS_TOKEN` (it must differ from the app token). They record the deployment decision from the verdict banner.
+- Change classification is a direct comparison of the captured Test and Production checksums. The application keeps no record of approved changes, so a difference is reported as a difference rather than as planned or drift.
 - Compilation readiness reads `ALL_OBJECTS` and `ALL_ERRORS`. Nothing is compiled.
 - Objects that only the Test version depends on (for example a new sequence or function) are looked up in Production's `ALL_OBJECTS`. A missing one blocks deployment.
 - Under **Recommended action**, a finding can carry copy-paste scripts built from its recorded evidence: `GRANT` statements for a grant Production lacks, a `DBMS_METADATA` DDL extract from Test plus a Production existence check for a missing object, `ALTER ... COMPILE` with an `ALL_ERRORS` query for invalid objects and for the callers of a changed interface, and a read-only `ALL_OBJECTS` check when existence could not be read. Each script says whether it is for Test or Production. Review actions such as business rules, error contracts, `AUTHID`, and dynamic SQL get no script. The model does not write these scripts, and the application never runs them.
@@ -55,7 +55,7 @@ Each report opens with a single verdict computed from the configurable blocking 
 
 ## Reports
 
-Each run has a UUID. The browser shows progress, a summary, and the full report. The report has five tabs — **Summary**, **Findings**, **Changes**, **Dependencies**, and **Details** — and every finding opens in a side drawer with numbered evidence blocks. The top navigation is the same on every page: **New analysis**, **Business mappings**, and **Trust records**. Export links download HTML, PDF, and JSON. PDF is a print layout of the report model. WeasyPrint is used when its native libraries import; otherwise fpdf2 writes the same sections.
+Each run has a UUID. The browser shows progress, a summary, and the full report. The report has five tabs — **Summary**, **Findings**, **Changes**, **Dependencies**, and **Details** — and every finding opens in a side drawer with numbered evidence blocks. The top navigation is the same on every page: **New analysis** and **Sign out**. Export links download HTML, PDF, and JSON. PDF is a print layout of the report model. WeasyPrint is used when its native libraries import; otherwise fpdf2 writes the same sections.
 
 ## Tests
 

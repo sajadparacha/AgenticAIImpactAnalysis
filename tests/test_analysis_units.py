@@ -7,6 +7,7 @@ import pytest
 from oracle_impact.analysis.annotate import annotate, classify, fingerprint
 from oracle_impact.analysis.compilation import MAX_DEPENDENTS, collect_compilation, compilation_findings
 from oracle_impact.analysis.coverage import build_coverage, edge_records
+from oracle_impact.analysis.environments import environment_name
 from oracle_impact.analysis.hashing import finding_id, source_hash
 from oracle_impact.analysis.plsql_scanner import authid_clause, error_declarations, financial_text, scan_package
 from oracle_impact.analysis.transactions import NOT_EVALUATED, _differences, build_profiles, facts, performance_assessment
@@ -400,6 +401,36 @@ def test_dependent_findings_distinguish_new_and_preexisting_invalid_objects():
     assert new.changed_lines_test == [4] and "PLS-00306" in new.evidence and "unused" not in new.evidence
     assert old.severity == Severity.MEDIUM and old.attributes == {"compile_scope": "dependent_preexisting", "compile_invalid": False, "compile_status": "INVALID"}
     assert sum(1 for item in summary.objects if item.role == "dependent" and item.name == "PKG") == 0
+
+
+def test_findings_name_the_role_when_both_labels_are_the_same():
+    """A local setup points both environments at one database; prose must still say Test and Production."""
+    test = _gateway(
+        {("APP", "PKG", "PACKAGE BODY"): "VALID", ("APP", "CALLER", "PROCEDURE"): "INVALID"},
+        errors={("APP", "CALLER"): [("PROCEDURE", 4, 7, "PLS-00306: wrong number", "ERROR")]},
+    )
+    production = _gateway({("APP", "PKG", "PACKAGE BODY"): "VALID", ("APP", "CALLER", "PROCEDURE"): "VALID"})
+    same = {"test": "LOCAL", "production": "LOCAL"}
+    summary = collect_compilation(
+        {"test": test, "production": production},
+        [("APP", "PKG")],
+        {"test": [("APP", "CALLER")], "production": [("APP", "CALLER")]},
+    )
+    [finding] = compilation_findings("run", summary, same)
+    assert "is INVALID in Test but VALID in Production" in finding.evidence
+    assert "LOCAL" not in finding.evidence
+    assert "in Test (LOCAL)" not in finding.evidence
+    assert finding.proposed_tests == ["After the fix, confirm ALL_OBJECTS shows APP.CALLER PROCEDURE as VALID in Test."]
+
+
+def test_distinguishing_labels_are_kept_next_to_the_role():
+    assert environment_name("test", {"test": "LOCAL", "production": "LOCAL"}) == "Test"
+    assert environment_name("production", {"test": "LOCAL", "production": "LOCAL"}) == "Production"
+    assert environment_name("test", {"test": "TEST", "production": "PRODUCTION"}) == "Test"
+    assert environment_name("test", {"test": "FINUAT1", "production": "FINPRD"}) == "Test (FINUAT1)"
+    assert environment_name("production", {"test": "FINUAT1", "production": "FINPRD"}) == "Production (FINPRD)"
+    assert environment_name("production", {"test": "LOCAL"}) == "Production"
+    assert environment_name("test", {}) == "Test"
 
 
 def test_unreadable_compile_errors_are_not_reported_as_empty():

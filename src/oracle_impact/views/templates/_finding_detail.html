@@ -13,7 +13,7 @@
     <p>No deterministic evidence. This item comes only from the AI investigator and did not match a deterministic finding. Treat it as a lead to check, not a fact.</p>
     {% else %}
     <p>{{ row.headline }}</p>
-    {% if row.change_type_label %}<p class="hint">Object change: {{ row.change_type_label }}{% if row.classification_label %} · {{ row.classification_label }}{% endif %}.</p>{% endif %}
+    {% if row.change_type_label %}<p class="hint">Object change: {{ row.change_type_label }}.</p>{% endif %}
     {% endif %}
   </div>
 
