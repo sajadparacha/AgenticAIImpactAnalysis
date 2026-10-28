@@ -121,11 +121,11 @@ def install_routes(app: FastAPI) -> None:
         return response
 
     @app.get("/", response_class=HTMLResponse)
-    def dashboard(request: Request, error: str = "", investigate: str = ""):
+    def dashboard(request: Request, error: str = "", investigate: str = "", packages: str = ""):
         return TEMPLATES.TemplateResponse(
             request,
             "dashboard.html",
-            _dashboard_context(request, error, "", investigate=bool(investigate)),
+            _dashboard_context(request, error, packages, investigate=bool(investigate)),
         )
 
     @app.post("/analyses")
@@ -449,8 +449,10 @@ def _load_status(request: Request, run_id: str) -> dict | None:
     if status is None:
         return None
     report = _report(request, run_id)
-    mode = (_read(request, run_id, "request.json") or {}).get("mode") or "deterministic"
-    return {"status": status, "report": report, "run_id": run_id, "mode": mode}
+    request_json = _read(request, run_id, "request.json") or {}
+    mode = request_json.get("mode") or "deterministic"
+    packages = request_json.get("packages") or []
+    return {"status": status, "report": report, "run_id": run_id, "mode": mode, "packages": packages}
 
 
 def _with_snippets(request: Request, run_id: str) -> Report | None:

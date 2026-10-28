@@ -154,10 +154,7 @@ function renderSteps(payload) {
   if (!container || !payload.steps) {
     return;
   }
-  const current = payload.status || "";
   const steps = payload.steps || {};
-  const open = new Set([...container.querySelectorAll("details[open]")].map((item) => item.dataset.step));
-  const seen = new Set([...container.querySelectorAll("details")].map((item) => item.dataset.step));
   container.replaceChildren();
   stageOrder.forEach((stage) => {
     const step = steps[stage];
@@ -165,25 +162,22 @@ function renderSteps(payload) {
       return;
     }
     const lines = step.lines && step.lines.length ? step.lines : ["No additional detail was recorded."];
-    const details = document.createElement("details");
-    details.className = "step";
-    details.dataset.step = stage;
-    const isCurrent = stage === current && current !== "completed" && current !== "failed";
-    if (open.has(stage) || (isCurrent && !seen.has(stage))) {
-      details.open = true;
-    }
-    const summary = document.createElement("summary");
-    const name = document.createElement("span");
-    name.textContent = stageLabels[stage] || stage;
-    summary.append(name, document.createTextNode(step.summary || ""));
+    const block = document.createElement("div");
+    block.className = "step";
+    block.dataset.step = stage;
+    const name = document.createElement("p");
+    name.className = "step-name";
+    const label = document.createElement("span");
+    label.textContent = stageLabels[stage] || stage;
+    name.append(label, document.createTextNode(step.summary || ""));
     const list = document.createElement("ul");
     for (const line of lines) {
       const item = document.createElement("li");
       item.textContent = line;
       list.append(item);
     }
-    details.append(summary, list);
-    container.append(details);
+    block.append(name, list);
+    container.append(block);
   });
 }
 

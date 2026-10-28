@@ -1,17 +1,21 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% block title %}Business mappings{% endblock %}
 {% block content %}
 <section class="page-intro">
   <div>
-    <h1>Business process mappings</h1>
+    <h1>{{ icon("building-2") }} Business process mappings</h1>
     <p class="lede">Which application and business process depend on each database object. Reports use these mappings to state business impact. Objects without a mapping are reported as "business impact not established"; nothing is inferred from names.</p>
   </div>
 </section>
 
-{% if notice %}<p class="notice {{ 'notice-warning' if notice.error else 'notice-success' }}" role="status">{{ notice.text }}</p>{% endif %}
+{% if notice %}<p class="notice {{ 'notice-warning' if notice.error else 'notice-success' }}" role="status">{{ icon('triangle-alert' if notice.error else 'circle-check') }} {{ notice.text }}</p>{% endif %}
 
 <section class="panel">
-  <h2>Active mappings</h2>
+  <div class="panel-head">
+    <h2>Active mappings</h2>
+    {% if mappings %}<p class="hint">{{ mappings | length }} active mapping{{ 's' if mappings | length != 1 }}.</p>{% endif %}
+  </div>
   {% if mappings %}
   <div class="table-scroll">
     <table>
@@ -40,7 +44,7 @@
     </table>
   </div>
   {% else %}
-  <p class="hint">No mappings are recorded. Every report shows business impact as not established.</p>
+  <p class="empty">{{ icon("building-2") }} No mappings are recorded. Every report shows business impact as not established.</p>
   {% endif %}
   {% if retired %}<p class="hint">{{ retired | length }} retired mapping{{ 's' if retired | length != 1 }} kept for audit.</p>{% endif %}
 </section>
@@ -48,7 +52,7 @@
 <section class="panel">
   <h2>Add a mapping</h2>
   {% if not settings.approvals_enabled %}
-  <p class="notice notice-info">Mappings are maintained by approvers. Set <code>OIA_APPROVER_ACCESS_TOKEN</code> and sign in with it to add mappings.</p>
+  <p class="notice notice-info">{{ icon("info") }} Mappings are maintained by approvers. Set <code>OIA_APPROVER_ACCESS_TOKEN</code> and sign in with it to add mappings.</p>
   {% elif role != 'approver' %}
   <p class="hint">Sign in with the approver access token to add or retire mappings.</p>
   {% else %}

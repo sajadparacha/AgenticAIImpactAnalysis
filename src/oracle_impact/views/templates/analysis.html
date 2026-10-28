@@ -1,11 +1,13 @@
 {% extends "base.html" %}
 {% from "_ui.html" import crumbs %}
-{% block title %}Run {{ run_id[:8] }} progress{% endblock %}
+{% from "_icons.html" import icon %}
+{% set package_label = packages | join(" · ") if packages else "selected packages" %}
+{% block title %}Analysing {{ package_label }}{% endblock %}
 {% block content %}
 {{ crumbs([{"label": "New analysis", "href": "/"}, {"label": "Run " ~ run_id[:8], "title": run_id}, {"label": "Progress"}]) }}
 <section class="page-intro">
   <div>
-    <h1>Analysis progress</h1>
+    <h1>Analysing {{ package_label }}</h1>
   </div>
   <p class="badge badge-{{ status.status }}">{{ status.status }}</p>
 </section>
@@ -33,7 +35,12 @@
 {% endif %}
 <ol class="stages" data-poll-status="/analyses/{{ run_id }}/status" data-report-url="/analyses/{{ run_id }}/report" data-current="{{ status.status }}" data-terminal="{{ 'yes' if status.status in ['completed', 'failed'] else 'no' }}">
   {% for stage, label in stage_labels.items() %}
-  <li data-stage="{{ stage }}">{{ label }}</li>
+  <li data-stage="{{ stage }}">
+    <span class="stage-icon stage-icon-done" aria-hidden="true">{{ icon("circle-check") }}</span>
+    <span class="stage-icon stage-icon-current" aria-hidden="true">{{ icon("circle-dashed") }}</span>
+    <span class="stage-icon stage-icon-pending" aria-hidden="true">{{ icon("circle") }}</span>
+    <span>{{ label }}</span>
+  </li>
   {% endfor %}
 </ol>
 <section class="model-activity {% if status.status != 'investigating' and not status.activity %}hidden{% endif %}" data-model-activity>
@@ -50,23 +57,31 @@
   <span>Analysis in progress</span>
 </div>
 <p class="hint" data-status-label>{{ status.detail or status.status }}</p>
-<div class="step-list" data-progress-steps>
-  {% for stage, label in stage_labels.items() %}
-    {% set step = (status.steps or {}).get(stage) %}
-    {% if step %}
-    <details class="step" data-step="{{ stage }}" {% if status.status == stage and status.status not in ["completed", "failed"] %}open{% endif %}>
-      <summary><span>{{ label }}</span>{{ step.summary }}</summary>
-      <ul>
-        {% for line in step.lines %}
-        <li>{{ line }}</li>
-        {% else %}
-        <li>No additional detail was recorded.</li>
-        {% endfor %}
-      </ul>
-    </details>
-    {% endif %}
-  {% endfor %}
+<details class="disclosure run-log" data-run-log>
+  <summary>{{ icon("history") }} Show run log</summary>
+  <div class="step-list" data-progress-steps>
+    {% for stage, label in stage_labels.items() %}
+      {% set step = (status.steps or {}).get(stage) %}
+      {% if step %}
+      <div class="step" data-step="{{ stage }}">
+        <p class="step-name"><span>{{ label }}</span>{{ step.summary }}</p>
+        <ul>
+          {% for line in step.lines %}
+          <li>{{ line }}</li>
+          {% else %}
+          <li>No additional detail was recorded.</li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+    {% endfor %}
+  </div>
+</details>
+{% if status.error %}
+<div class="banner banner-error" data-status-error>
+  <p>{{ status.error }}</p>
+  <a class="button" href="/?packages={{ packages | join(', ') | urlencode }}">Start again</a>
 </div>
-{% if status.error %}<p class="banner banner-error" data-status-error>{{ status.error }}</p>{% endif %}
+{% endif %}
 {% if status.status not in ["completed", "failed"] %}<p class="hint" data-report-hint>The report opens here when the analysis finishes.</p>{% endif %}
 {% endblock %}

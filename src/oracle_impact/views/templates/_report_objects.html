@@ -181,7 +181,7 @@
 
   <div class="card" id="transactions">
     <div class="card-head"><h3>Transaction and data impact</h3>{{ ui.kind('det') }}</div>
-    <p class="hint">Observed differences come from comparing the routine in Test with Production. Consequences are predictions. This report does not record test results.</p>
+    <p class="hint">Observed differences come from comparing the routine in Test with Production. The rest of this card predicts the effect; it does not observe it.</p>
     {% for profile in view.transactions %}
     <article class="txn">
       <h4><code>{{ profile.qualified }}.{{ profile.routine }}</code> <span class="hint">{{ profile.change }}</span></h4>

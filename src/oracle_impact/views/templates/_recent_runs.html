@@ -1,3 +1,4 @@
+{% from "_icons.html" import icon %}
 <section class="panel">
   <h2>Recent runs</h2>
   {% if runs %}
@@ -24,6 +25,6 @@
   <button type="button" class="btn-ghost" data-show-all-runs hidden>Show all {{ runs | length }} runs</button>
   {% endif %}
   {% else %}
-  <p class="hint">No analyses yet. Try a demo package above.</p>
+  <p class="empty">{{ icon("history") }} No analyses yet. Try a demo package above.</p>
   {% endif %}
 </section>

@@ -29,7 +29,7 @@
     </div>
     <h1>{{ finding.id }}{% if reviews %} <span class="finding-sub">explains <a href="/analyses/{{ report.run_id }}/findings/{{ reviews }}">{{ reviews }}</a></span>{% endif %}</h1>
     {% if is_ai %}
-    <p class="hint">Written by the AI model to explain a finding in plain words. It is not proof, and it does not change the deployment recommendation.</p>
+    <p class="hint">Written by the AI model to explain a finding in plain words.</p>
     {% else %}
     <p class="hint">Found by the Python checks. The AI model did not write this.</p>
     {% endif %}
