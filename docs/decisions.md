@@ -56,6 +56,14 @@ Lowercase and quoted identifiers are rejected so names can be validated before t
 
 The three analyzer labels (Not recommended, Requires further investigation, Eligible for review after testing) are kept unchanged for existing exports and tests. Readiness (Deployment recommended, Deployment on hold, Indeterminate) is a second, policy-driven state that also considers required tests, drift, coverage, and freshness. It does not store validation results or reviewer decisions. A positive readiness never implies approval.
 
+## One verdict on screen, formal labels in exports
+
+The screen shows one deployment verdict, not a set of state chips. A friendly banner title — "Recommended, pending approval", "On hold", or "Can't decide yet" — sits above the stored readiness summary in full. The formal policy labels (`Deployment recommended`, `Deployment on hold`, `Indeterminate`) appear once in small text under the banner and stay the labels used by HTML/PDF/JSON exports, email, and tests. "Ready to deploy" and "Not yet approved" are forbidden on screen: a positive readiness is only ever a recommendation, and "Unclassified" objects do not hold deployment, so they are never labelled as not-yet-approved. Screen-only wording lives in the view layer (`decision_view.py` / `report_view.py`); the stored analyzer and readiness labels are never renamed.
+
+## Admin tools sit out of the reading flow
+
+Recording decisions, baselines, and approved change records changes what other people see, so those actions are approver-only and kept out of the primary reading path. The approval form opens from a "Record decision" button in the verdict banner (a native `<dialog>`), with a no-JS fallback link to the Details tab. Baseline and per-object "Record approved change" forms collapse into an "Approver tools" disclosure in the Changes tab. Listing, clearing, and withdrawing baselines and change records moved to the dedicated Trust records page at `/registry`, linked in the top navigation; its clear/withdraw posts carry a validated `return_to=registry` field so they return to that page. Non-approvers see only the decision chip and the read-only lists.
+
 ## Unclassified changes do not hold deployment
 
 Holding every difference without a manifest entry would put every existing team on hold on day one, because no manifest exists yet. Only differences that contradict a recorded fact (a trusted baseline or an approved checksum) are unexpected drift and hold deployment. Unclassified changes are counted and shown prominently instead.
