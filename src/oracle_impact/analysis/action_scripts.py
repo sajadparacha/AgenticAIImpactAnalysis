@@ -3,6 +3,9 @@
 Scripts are built only from facts the deterministic checks recorded: object names, object
 types, grants, and callers. Actions that need a person's judgment, such as reviewing a
 business rule or an error contract, get no script.
+
+Each script names the release stage it belongs to, so a fix plan can put them in order:
+fixes made in Test, work in Production before the package is deployed, and work after it.
 """
 
 import re
@@ -29,6 +32,7 @@ _DDL_TYPES = {
     "TYPE", "TYPE BODY", "SYNONYM", "TRIGGER", "MATERIALIZED VIEW", "INDEX",
 }
 _CALLER_TYPES = ("PACKAGE BODY", "PROCEDURE", "FUNCTION", "TRIGGER", "TYPE BODY", "VIEW")
+FIX_IN_TEST, BEFORE_RELEASE, AFTER_RELEASE = "fix_in_test", "before_release", "after_release"
 
 
 def apply_action_scripts(findings: list[Finding], edges=(), snapshot: Snapshot | None = None) -> None:
@@ -97,7 +101,7 @@ def _grant_scripts(finding: Finding) -> list[dict[str, str]]:
         f"   AND table_name = '{name}'\n"
         " ORDER BY grantee, privilege;\n"
     )
-    return [{"title": f"Grant access to {owner}.{name} in Production", "environment": "production", "sql": sql}]
+    return [{"title": f"Grant access to {owner}.{name} in Production", "environment": "production", "stage": AFTER_RELEASE, "sql": sql}]
 
 
 def _missing_object_scripts(finding: Finding) -> list[dict[str, str]]:
@@ -111,7 +115,7 @@ def _missing_object_scripts(finding: Finding) -> list[dict[str, str]]:
     label = object_type or "table or view"
 
     notes = [
-        f"Step 1 of 2. This prints the DDL of {label} {owner}.{name} from Test.",
+        f"Part 1 of 2. This prints the DDL of {label} {owner}.{name} from Test.",
         "Your account needs SELECT_CATALOG_ROLE or must own the object.",
     ]
     if "TABLE" in types:
@@ -132,13 +136,13 @@ def _missing_object_scripts(finding: Finding) -> list[dict[str, str]]:
     verify = _banner(
         finding,
         "production",
-        "Step 2 of 2. Run the DDL that step 1 printed in Production, before the package is deployed.",
+        "Part 2 of 2. Run the DDL that part 1 printed in Production, before the package is deployed.",
         f"Then confirm {owner}.{name} exists there and is VALID.",
     )
     verify += _status_query(owner, name, types)
     return [
-        {"title": f"Extract the DDL of {owner}.{name} from Test", "environment": "test", "sql": extract},
-        {"title": f"Create {owner}.{name} in Production and confirm it", "environment": "production", "sql": verify},
+        {"title": f"Extract the DDL of {owner}.{name} from Test", "environment": "test", "stage": BEFORE_RELEASE, "sql": extract},
+        {"title": f"Create {owner}.{name} in Production and confirm it", "environment": "production", "stage": BEFORE_RELEASE, "sql": verify},
     ]
 
 
@@ -155,7 +159,7 @@ def _existence_check_scripts(finding: Finding) -> list[dict[str, str]]:
         "No row means the object is missing and must be deployed first.",
     )
     sql += _status_query(owner, name, types)
-    return [{"title": f"Check that {owner}.{name} exists in Production", "environment": "production", "sql": sql}]
+    return [{"title": f"Check that {owner}.{name} exists in Production", "environment": "production", "stage": BEFORE_RELEASE, "sql": sql}]
 
 
 def _compilation_scripts(finding: Finding) -> list[dict[str, str]]:
@@ -168,7 +172,7 @@ def _compilation_scripts(finding: Finding) -> list[dict[str, str]]:
         sql = _banner(finding, "production", "Read-only. Shows why the object is invalid in Production today.")
         sql += _status_query(owner, name, [object_type] if object_type in _COMPILE else [])
         sql += "\n" + _errors_query(owner, name, object_type)
-        return [{"title": f"Inspect {owner}.{name} in Production", "environment": "production", "sql": sql}]
+        return [{"title": f"Inspect {owner}.{name} in Production", "environment": "production", "stage": BEFORE_RELEASE, "sql": sql}]
     statement = _COMPILE.get(object_type)
     notes = ["Fix the source first. Recompiling unchanged source returns the same errors."]
     if statement is None:
@@ -178,7 +182,7 @@ def _compilation_scripts(finding: Finding) -> list[dict[str, str]]:
         sql += statement.format(name=f"{owner}.{name}") + "\n\n"
     sql += _status_query(owner, name, [object_type] if statement else [])
     sql += "\n" + _errors_query(owner, name, object_type)
-    return [{"title": f"Recompile {owner}.{name} in Test and read its errors", "environment": "test", "sql": sql}]
+    return [{"title": f"Recompile {owner}.{name} in Test and read its errors", "environment": "test", "stage": FIX_IN_TEST, "sql": sql}]
 
 
 def _caller_scripts(finding: Finding, types: dict[tuple[str, str], str]) -> list[dict[str, str]]:
@@ -214,7 +218,7 @@ def _caller_scripts(finding: Finding, types: dict[tuple[str, str], str]) -> list
         f" WHERE (owner, name) IN ({in_list})\n"
         " ORDER BY owner, name, type, sequence;\n"
     )
-    return [{"title": "Compile the callers in Test", "environment": "test", "sql": sql}]
+    return [{"title": "Compile the callers in Test", "environment": "test", "stage": FIX_IN_TEST, "sql": sql}]
 
 
 def _status_query(owner: str, name: str, types: list[str]) -> str:

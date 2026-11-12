@@ -115,9 +115,6 @@ def _render_fpdf(report: Report, view: dict | None = None) -> bytes:
             for script in finding.attributes.get("action_scripts") or []:
                 _write(pdf, "Action script: " + script.get("title", ""), 10, "B", 4)
                 _write(pdf, script.get("sql", ""), 9, "", 4)
-        for snippet in finding.attributes.get("test_snippets") or []:
-            _write(pdf, snippet.get("title", "Test script"), 10, "B", 4)
-            _write(pdf, snippet.get("sql", ""), 9, "", 4)
         pdf.ln(1)
     if issues["extra"]:
         _heading(pdf, "Additional notes from the AI")

@@ -106,7 +106,11 @@
       <span class="hint">An approver records the decision.</span>
       {% endif %}
       {% if not print_mode %}
-      <a class="button verdict-cta" href="{{ view.base_url }}?tab={{ 'findings' if verdict.decision == 'recommended' else 'overview' }}" data-goto-tab="{{ 'findings' if verdict.decision == 'recommended' else 'overview' }}">{{ 'View findings' if verdict.decision == 'recommended' else "See what's blocking" }}</a>
+      {% set open_items = (ready.open_blockers or 0) + (ready.open_validations or 0) %}
+      {% if open_items %}
+      <a class="button verdict-cta" href="/analyses/{{ view.run_id }}/fix-plan">{{ icon("list-checks") }} Step-by-step fix plan</a>
+      {% endif %}
+      <a class="button {{ 'btn-ghost ' if open_items }}verdict-cta" href="{{ view.base_url }}?tab={{ 'findings' if verdict.decision == 'recommended' else 'overview' }}" data-goto-tab="{{ 'findings' if verdict.decision == 'recommended' else 'overview' }}">{{ 'View findings' if verdict.decision == 'recommended' else "See what's blocking" }}</a>
       {% endif %}
     </div>
   </section>
@@ -185,5 +189,9 @@
       <button type="button" class="btn-ghost" data-next-finding>Next {{ icon("chevron-right") }}</button>
     </footer>
   </aside>
+  <nav class="context-menu" data-context-menu hidden aria-label="Finding actions">
+    <button type="button" data-cm-panel>{{ icon("layout-dashboard") }}<span>Show in panel</span></button>
+    <button type="button" data-cm-full>{{ icon("external-link") }}<span>Open full finding</span></button>
+  </nav>
   {% endif %}
 </article>

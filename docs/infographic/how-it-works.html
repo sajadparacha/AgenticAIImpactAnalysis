@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How the database change impact check works</title>
+<style>
+  @page { size: 1400px 2600px; margin: 0; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --ink: #13233a;
+    --muted: #5a6a80;
+    --soft: #8a98ab;
+    --line: #dde3eb;
+    --bg: #f4f6f9;
+    --card: #ffffff;
+    --navy: #13233a;
+    --teal: #0e7c86;
+    --teal-soft: #e3f2f3;
+    --red: #c8372d;
+    --red-soft: #fbe9e7;
+    --amber: #c27a06;
+    --amber-soft: #fdf3dc;
+    --green: #1f8a4c;
+    --green-soft: #e4f4ea;
+  }
+  html, body { width: 1400px; height: 2600px; background: var(--bg); }
+  body {
+    font-family: -apple-system, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+  }
+  .poster { width: 1400px; height: 2600px; display: flex; flex-direction: column; }
+
+  /* Header */
+  header { background: var(--navy); color: #fff; padding: 56px 72px 52px; }
+  .kicker { font-size: 15px; letter-spacing: 2.4px; text-transform: uppercase; color: #8fd3d9; font-weight: 600; }
+  h1 { font-size: 50px; line-height: 1.12; font-weight: 700; margin-top: 16px; max-width: 1100px; letter-spacing: -0.5px; }
+  .lede { font-size: 21px; line-height: 1.5; color: #c4cfdd; margin-top: 18px; max-width: 1050px; }
+
+  main { flex: 1; padding: 44px 72px 0; display: flex; flex-direction: column; gap: 40px; }
+  .section-title { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; }
+  .section-title .num {
+    width: 34px; height: 34px; border-radius: 50%; background: var(--teal); color: #fff;
+    font-size: 17px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex: 0 0 34px;
+  }
+  .section-title h2 { font-size: 27px; font-weight: 700; letter-spacing: -0.2px; }
+  .section-title p { font-size: 17px; color: var(--muted); margin-left: auto; }
+
+  /* Problem */
+  .problem { display: grid; grid-template-columns: 1fr 660px; gap: 40px; align-items: center;
+    background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 30px 36px; }
+  .problem h3 { font-size: 25px; line-height: 1.3; font-weight: 700; }
+  .problem p { font-size: 18px; line-height: 1.55; color: var(--muted); margin-top: 12px; }
+  .problem p strong { color: var(--ink); }
+
+  /* Flow */
+  .flow { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0; position: relative; }
+  .step { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 0 12px; position: relative; }
+  .step .icon {
+    width: 104px; height: 104px; border-radius: 50%; background: var(--card); border: 2px solid var(--line);
+    display: flex; align-items: center; justify-content: center; position: relative; z-index: 2;
+  }
+  .step.key .icon { border-color: var(--teal); background: var(--teal-soft); }
+  .step .badge {
+    position: absolute; top: -4px; right: -4px; width: 32px; height: 32px; border-radius: 50%;
+    background: var(--navy); color: #fff; font-size: 15px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center; border: 3px solid var(--bg);
+  }
+  .step h4 { font-size: 19px; font-weight: 700; margin-top: 18px; line-height: 1.25; }
+  .step p { font-size: 15.5px; line-height: 1.45; color: var(--muted); margin-top: 8px; }
+  .step .tag { display: inline-block; margin-top: 10px; font-size: 13px; font-weight: 700; letter-spacing: 0.6px;
+    text-transform: uppercase; color: var(--teal); background: var(--teal-soft); padding: 4px 10px; border-radius: 99px; }
+  .flow .connector { position: absolute; top: 52px; height: 2px; background: var(--line); z-index: 1; }
+  .flow .arrow { position: absolute; top: 45px; z-index: 1; }
+
+  /* Risk areas */
+  .areas { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  .area { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px 18px 16px;
+    display: grid; grid-template-columns: 40px 1fr; gap: 14px; align-items: start; }
+  .area .glyph { width: 40px; height: 40px; border-radius: 10px; background: var(--teal-soft);
+    display: flex; align-items: center; justify-content: center; }
+  .area h5 { font-size: 17px; font-weight: 700; }
+  .area p { font-size: 14.5px; line-height: 1.4; color: var(--muted); margin-top: 4px; }
+
+  /* Verdicts */
+  .verdicts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  .verdict { border-radius: 16px; padding: 24px 26px; border: 1px solid; display: flex; gap: 18px; align-items: flex-start; }
+  .verdict.red { background: var(--red-soft); border-color: #f1c6c1; }
+  .verdict.amber { background: var(--amber-soft); border-color: #f1dca8; }
+  .verdict.green { background: var(--green-soft); border-color: #bfe2cc; }
+  .light { width: 46px; height: 46px; border-radius: 50%; flex: 0 0 46px; display: flex; align-items: center; justify-content: center; }
+  .red .light { background: var(--red); }
+  .amber .light { background: var(--amber); }
+  .green .light { background: var(--green); }
+  .verdict h4 { font-size: 22px; font-weight: 700; line-height: 1.2; }
+  .red h4 { color: var(--red); }
+  .amber h4 { color: var(--amber); }
+  .green h4 { color: var(--green); }
+  .verdict .means { font-size: 16.5px; line-height: 1.45; margin-top: 8px; color: var(--ink); }
+  .verdict .next { font-size: 14.5px; line-height: 1.4; margin-top: 10px; color: var(--muted); }
+  .verdict .next b { color: var(--ink); }
+
+  /* Lab results */
+  .lab { background: var(--card); border: 1px solid var(--line); border-radius: 18px; overflow: hidden; }
+  .lab-row { display: grid; grid-template-columns: 52px 1fr 1fr 270px; gap: 20px; align-items: center; padding: 17px 28px; border-top: 1px solid var(--line); }
+  .lab-row:first-child { border-top: none; }
+  .lab-head { background: #eef2f6; padding-top: 12px; padding-bottom: 12px; }
+  .lab-head span { font-size: 13px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
+  .lab-row .idx { width: 34px; height: 34px; border-radius: 9px; background: #eef2f6; color: var(--muted);
+    font-size: 15px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  .lab-row .change { font-size: 17px; font-weight: 600; line-height: 1.35; }
+  .lab-row .why { font-size: 15.5px; color: var(--muted); line-height: 1.4; }
+  .chip { display: inline-flex; align-items: center; gap: 9px; font-size: 15.5px; font-weight: 700; padding: 7px 14px; border-radius: 99px; }
+  .chip i { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+  .chip.red { background: var(--red-soft); color: var(--red); } .chip.red i { background: var(--red); }
+  .chip.amber { background: var(--amber-soft); color: var(--amber); } .chip.amber i { background: var(--amber); }
+  .chip.green { background: var(--green-soft); color: var(--green); } .chip.green i { background: var(--green); }
+
+  /* Safeguards */
+  .guards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
+  .guard { display: flex; flex-direction: column; gap: 12px; padding: 22px 22px 20px; background: var(--navy); border-radius: 16px; color: #fff; }
+  .guard .gicon { width: 50px; height: 50px; border-radius: 12px; background: rgba(143, 211, 217, 0.14);
+    display: flex; align-items: center; justify-content: center; }
+  .guard h5 { font-size: 19px; font-weight: 700; }
+  .guard p { font-size: 15px; line-height: 1.45; color: #b9c6d6; }
+
+  footer { margin-top: auto; padding: 26px 72px 34px; display: flex; gap: 24px; align-items: center; border-top: 1px solid var(--line); background: #eef2f6; }
+  footer .label { font-size: 13px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; color: var(--muted); flex: 0 0 auto; }
+  footer ul { display: flex; gap: 28px; list-style: none; flex-wrap: wrap; }
+  footer li { font-size: 15.5px; color: var(--ink); display: flex; align-items: center; gap: 9px; }
+  footer li::before { content: ""; width: 14px; height: 2px; background: var(--soft); display: inline-block; }
+</style>
+</head>
+<body>
+<div class="poster">
+
+  <header>
+    <div class="kicker">Oracle change impact analysis</div>
+    <h1>Know what a database change will break — before it goes live</h1>
+    <p class="lede">An automatic second pair of eyes. It compares the new version in Test with what runs in Production, checks everything that depends on it, and gives one clear verdict with the evidence behind it.</p>
+  </header>
+
+  <main>
+
+    <!-- 1. The problem -->
+    <section>
+      <div class="section-title"><div class="num">1</div><h2>Why we need it</h2></div>
+      <div class="problem">
+        <div>
+          <h3>A one-line change can quietly break things far away.</h3>
+          <p>Database programs are shared. Billing, reports, alerts and other programs all depend on them. <strong>Today, spotting the knock-on effects depends on someone remembering everything.</strong> This tool checks it the same way, every time.</p>
+        </div>
+        <svg width="660" height="250" viewBox="0 0 660 250" role="img" aria-label="One changed program connected to five things that depend on it">
+          <g stroke="#c9d2de" stroke-width="2" fill="none">
+            <path d="M330 125 L110 40"/><path d="M330 125 L110 210"/><path d="M330 125 L550 40"/>
+            <path d="M330 125 L550 210"/><path d="M330 125 L330 228"/>
+          </g>
+          <g font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#13233a" text-anchor="middle">
+            <rect x="20" y="18" width="180" height="44" rx="22" fill="#fff" stroke="#dde3eb" stroke-width="1.5"/><text x="110" y="45">Billing</text>
+            <rect x="20" y="188" width="180" height="44" rx="22" fill="#fff" stroke="#dde3eb" stroke-width="1.5"/><text x="110" y="215">Reports</text>
+            <rect x="460" y="18" width="180" height="44" rx="22" fill="#fff" stroke="#dde3eb" stroke-width="1.5"/><text x="550" y="45">Other programs</text>
+            <rect x="460" y="188" width="180" height="44" rx="22" fill="#fff" stroke="#dde3eb" stroke-width="1.5"/><text x="550" y="215">Alerts &amp; monitoring</text>
+            <rect x="255" y="206" width="150" height="40" rx="20" fill="#fff" stroke="#dde3eb" stroke-width="1.5"/><text x="330" y="231">Data tables</text>
+          </g>
+          <circle cx="330" cy="112" r="64" fill="#fbe9e7" stroke="#c8372d" stroke-width="2"/>
+          <g font-family="-apple-system, Helvetica, Arial, sans-serif" text-anchor="middle">
+            <text x="330" y="106" font-size="16" font-weight="700" fill="#c8372d">One changed</text>
+            <text x="330" y="127" font-size="16" font-weight="700" fill="#c8372d">program</text>
+          </g>
+        </svg>
+      </div>
+    </section>
+
+    <!-- 2. How it works -->
+    <section>
+      <div class="section-title"><div class="num">2</div><h2>How it works</h2><p>Automatic, and runs the same way every time</p></div>
+      <div class="flow">
+        <div class="connector" style="left: 10%; right: 10%;"></div>
+
+        <div class="step">
+          <div class="icon">
+            <svg width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="#13233a" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 7l-5 5 5 5"/><path d="M16 7l5 5-5 5"/><path d="M13.5 4.5l-3 15"/></svg>
+            <div class="badge">1</div>
+          </div>
+          <h4>A developer changes the code</h4>
+          <p>The new version is built and tried out in the Test environment.</p>
+        </div>
+
+        <div class="step">
+          <div class="icon">
+            <svg width="54" height="54" viewBox="0 0 24 24" fill="none" stroke="#13233a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="7" cy="6" rx="4.5" ry="2"/><path d="M2.5 6v9c0 1.1 2 2 4.5 2s4.5-.9 4.5-2V6"/><path d="M2.5 10.5c0 1.1 2 2 4.5 2s4.5-.9 4.5-2"/><ellipse cx="17" cy="9" rx="4.5" ry="2"/><path d="M12.5 9v9c0 1.1 2 2 4.5 2s4.5-.9 4.5-2V9"/><path d="M12.5 13.5c0 1.1 2 2 4.5 2s4.5-.9 4.5-2"/></svg>
+            <div class="badge">2</div>
+          </div>
+          <h4>The tool reads Test and Production</h4>
+          <p>Both versions side by side, so it knows exactly what would change.</p>
+          <span class="tag">Read-only</span>
+        </div>
+
+        <div class="step">
+          <div class="icon">
+            <svg width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="#13233a" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/><path d="M8 10.5h5"/><path d="M10.5 8v5"/></svg>
+            <div class="badge">3</div>
+          </div>
+          <h4>It checks 8 risk areas</h4>
+          <p>What changed, what depends on it, and what could fail after release.</p>
+        </div>
+
+        <div class="step key">
+          <div class="icon">
+            <svg width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="#0e7c86" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2.5"/><path d="M8 8h8"/><path d="M8 12h8"/><path d="M8 16h4"/><path d="M14.5 16.5l1.5 1.5 3-3"/></svg>
+            <div class="badge">4</div>
+          </div>
+          <h4>Fixed rules give one verdict</h4>
+          <p>Same input, same answer. Every finding comes with its evidence.</p>
+          <span class="tag">Report + fix plan</span>
+        </div>
+
+        <div class="step">
+          <div class="icon">
+            <svg width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="#13233a" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="7.5" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6.5 6.5-6.5 1.6 0 3 .5 4.1 1.4"/><path d="M15 18l2.2 2.2L21.5 16"/></svg>
+            <div class="badge">5</div>
+          </div>
+          <h4>A person decides</h4>
+          <p>The team tests, an approver signs off, and only then is it released.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. Risk areas -->
+    <section>
+      <div class="section-title"><div class="num">3</div><h2>The 8 things it checks</h2></div>
+      <div class="areas">
+        <div class="area">
+          <div class="glyph"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0e7c86" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 7l-5 5 5 5"/><path d="M16 7l5 5-5 5"/></svg></div>
+          <div><h5>The code itself</h5><p>Exactly which lines changed, ignoring cosmetic edits.</p></div>
+        </div>
+        <div class="area">
+          <div class="glyph"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0e7c86" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h10"/><path d="M10 7l5 5-5 5"/><path d="M19 5v14"/></svg></div>
+          <div><h5>How it is called</h5><p>The inputs other programs send and what they get back.</p></div>
+        </div>
+        <div class="area">
+          <div class="glyph"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0e7c86" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="19" r="2.5"/><circle cx="19" cy="19" r="2.5"/><path d="M12 7.5v4M12 11.5l-5.5 5.5M12 11.5l5.5 5.5"/></svg></div>
+          <div><h5>Who relies on it</h5><p>Every other program that uses it, two levels deep.</p></div>
+        </div>
+        <div class="area">
+          <div class="glyph"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0e7c86" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M3 15h18M9 4v16"/></svg></div>
+          <div><h5>Data it touches</h5><p>Tables it reads or writes, and if they exist in Production.</p></div>
+        </div>
+        <div class="area">
+          <div class="glyph"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0e7c86" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7V4"/><rect x="8" y="13" width="8" height="5"/></svg></div>
+          <div><h5>Saving work safely</h5><p>Whether a failure could leave a job half finished.</p></div>
+        </div>
+        <div class="area">
+          <div class="glyph"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0e7c86" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l9.5 17h-19z"/><path d="M12 10v4.5"/><path d="M12 17.5v.5"/></svg></div>
+          <div><h5>Error behaviour</h5><p>Error codes that other systems and alerts listen for.</p></div>
+        </div>
+        <div class="area">
+          <div class="glyph"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0e7c86" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg></div>
+          <div><h5>Who may run it</h5><p>Which accounts are allowed to use it, in each environment.</p></div>
+        </div>
+        <div class="area">
+          <div class="glyph"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0e7c86" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M8 12.2l2.7 2.7L16.2 9.4"/></svg></div>
+          <div><h5>Does it still work</h5><p>Whether it, or anything using it, would fail to build.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4. Verdicts -->
+    <section>
+      <div class="section-title"><div class="num">4</div><h2>One of three verdicts</h2></div>
+      <div class="verdicts">
+        <div class="verdict red">
+          <div class="light"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg></div>
+          <div>
+            <h4>On hold</h4>
+            <p class="means">Something would break. It must not be released as it is.</p>
+            <p class="next"><b>Next:</b> fix the issue, then run the check again.</p>
+          </div>
+        </div>
+        <div class="verdict amber">
+          <div class="light"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M12 6.5v7"/><path d="M12 17.5v.3"/></svg></div>
+          <div>
+            <h4>Can't decide yet</h4>
+            <p class="means">Code alone can't settle it. A person needs to look.</p>
+            <p class="next"><b>Next:</b> the owner reviews the flagged item and tests it.</p>
+          </div>
+        </div>
+        <div class="verdict green">
+          <div class="light"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 12.5l4 4 8-9"/></svg></div>
+          <div>
+            <h4>Recommended</h4>
+            <p class="means">Nothing blocking was found. Still pending approval.</p>
+            <p class="next"><b>Next:</b> normal testing and sign-off, then release.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5. Lab results -->
+    <section>
+      <div class="section-title"><div class="num">5</div><h2>Real results from our test lab</h2><p>Five sample changes, checked against live Test and Production databases</p></div>
+      <div class="lab">
+        <div class="lab-row lab-head"><span></span><span>The change</span><span>What the tool found</span><span>Verdict</span></div>
+        <div class="lab-row">
+          <div class="idx">1</div>
+          <div class="change">Discount rule raised: from orders above 100 to above 500</div>
+          <div class="why">A money rule changed. Needs the business owner to confirm it.</div>
+          <div><span class="chip amber"><i></i>Can't decide yet</span></div>
+        </div>
+        <div class="lab-row">
+          <div class="idx">2</div>
+          <div class="change">Work is saved before the batch job has finished</div>
+          <div class="why">A failure halfway would leave a half-finished batch.</div>
+          <div><span class="chip red"><i></i>On hold</span></div>
+        </div>
+        <div class="lab-row">
+          <div class="idx">3</div>
+          <div class="change">Refunds now write to a new ledger table</div>
+          <div class="why">That table doesn't exist in Production. It would fail on release.</div>
+          <div><span class="chip red"><i></i>On hold</span></div>
+        </div>
+        <div class="lab-row">
+          <div class="idx">4</div>
+          <div class="change">An error code changed from 20001 to 20099</div>
+          <div class="why">Alerts listening for the old code would go silent.</div>
+          <div><span class="chip amber"><i></i>Can't decide yet</span></div>
+        </div>
+        <div class="lab-row">
+          <div class="idx">5</div>
+          <div class="change">An optional input added, with a safe default</div>
+          <div class="why">Everything that uses it today keeps working unchanged.</div>
+          <div><span class="chip green"><i></i>Recommended</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6. Safeguards -->
+    <section>
+      <div class="section-title"><div class="num">6</div><h2>Built-in safeguards</h2></div>
+      <div class="guards">
+        <div class="guard">
+          <div class="gicon"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#8fd3d9" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></div>
+          <h5>Look, never touch</h5>
+          <p>Read-only access. It never runs our code or changes any data.</p>
+        </div>
+        <div class="guard">
+          <div class="gicon"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#8fd3d9" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.3-7.5 9.5-4.3-1.2-7.5-4.9-7.5-9.5V6z"/><path d="M8.8 12l2.2 2.2 4.2-4.4"/></svg></div>
+          <h5>AI advises, rules decide</h5>
+          <p>AI can raise questions, but it can never change the verdict.</p>
+        </div>
+        <div class="guard">
+          <div class="gicon"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#8fd3d9" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 12h6M9 16h6"/></svg></div>
+          <h5>Evidence for every claim</h5>
+          <p>Each finding points to the exact lines and records behind it.</p>
+        </div>
+        <div class="guard">
+          <div class="gicon"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#8fd3d9" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="7.5" r="3.5"/><path d="M5 20.5c0-3.9 3.1-7 7-7s7 3.1 7 7"/></svg></div>
+          <h5>People make the call</h5>
+          <p>It recommends. An approver decides, and every run is kept on record.</p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer>
+    <div class="label">What it does not do</div>
+    <ul>
+      <li>Measure speed or performance</li>
+      <li>Read business data</li>
+      <li>See programs outside the database</li>
+      <li>Deploy or approve a release</li>
+    </ul>
+  </footer>
+
+</div>
+</body>
+</html>

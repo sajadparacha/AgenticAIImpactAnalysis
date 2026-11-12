@@ -97,7 +97,6 @@
           <p class="check-head">{{ ui.sev(group.level, group.level_label) }} <a href="{{ ui.finding_href(view, group.finding_id) }}" data-open-finding="{{ group.finding_id }}">{{ group.finding_id }}</a> <span>{{ group.headline }}</span></p>
           <ul class="step-list-plain">
             {% for step in group.steps %}<li><span class="attrib{{ ' attrib-ai' if step.from_ai }}">{{ step.attribution }}</span> {{ step.text }}</li>{% endfor %}
-            {% if group.snippets %}<li><a href="/analyses/{{ view.run_id }}/findings/{{ group.finding_id }}">{{ group.snippets }} SQL test script{{ 's' if group.snippets != 1 }} to run in Test</a></li>{% endif %}
           </ul>
         </li>
       {% endmacro %}

@@ -713,10 +713,19 @@ def test_compile_failure_cannot_be_cleared_by_a_passed_validation(tmp_path):
 
 
 def test_dependency_edges_keep_dictionary_and_source_scan_provenance(tmp_path):
-    report = _demo(tmp_path, "DEMO.PKG_BILLING")
+    body = (
+        "PACKAGE BODY pkg_demo AS PROCEDURE run(p_id IN NUMBER) IS BEGIN "
+        "INSERT INTO app.account (id) VALUES (p_id); "
+        "INSERT INTO app.ledger (id) VALUES (p_id); END; END;\n"
+    )
+    test_catalog, prod_catalog = _pair(body, body)
+    for catalog in (test_catalog, prod_catalog):
+        catalog.add_dependency(("APP", "PKG_DEMO", "PACKAGE BODY"), ("APP", "ACCOUNT", "TABLE"))
+    report = run_catalogs(tmp_path, ["APP.PKG_DEMO"], test_catalog, prod_catalog)
     provenance = {edge.provenance for edge in report.dependency_edges}
     assert {"dictionary", "source_scan"} <= provenance
     assert all(edge.provenance in {"dictionary", "source_scan", "unresolved"} for edge in report.dependency_edges)
+    assert [edge.referenced_name for edge in report.dependency_edges if edge.provenance == "source_scan"] == ["LEDGER"]
 
 
 def test_required_tests_stay_open_and_stored_results_do_not_clear_them(tmp_path):
@@ -1273,7 +1282,7 @@ def test_dispatch_fixture_covers_the_recent_checks(tmp_path):
     assert report.recommendation == Recommendation.NOT_RECOMMENDED
     assert _readiness(report)["decision"] == "on_hold"
     missing = {item.affected_object: item for item in report.findings if item.rule_id == "DEP-MISSING-OBJECT"}
-    assert set(missing) == {"DEMO.DISPATCH_SEQ", "DEMO.NEXT_BATCH"}
+    assert set(missing) == {"DEMO.NEXT_DISPATCH_ID", "DEMO.NEXT_BATCH"}
     assert {item.rule_id for item in report.policy.blockers} == {"BLK-MISSING-OBJECT"}
 
     [dynamic] = [item for item in report.findings if item.change_category == "dynamic_sql"]
@@ -1305,14 +1314,63 @@ def test_dispatch_fixture_covers_the_recent_checks(tmp_path):
     assert {env.environment for state in report.object_states for env in state.environments} == {"test", "production"}
 
 
+def test_order_fixture_covers_many_breaking_changes(tmp_path):
+    """DEMO.PKG_ORDER crowds many breaking changes into one package: a mandatory parameter,
+    an AUTHID change, a public exception, a Test-only function and view, a commit before a
+    later insert, dynamic SQL, and a grant Production lacks."""
+    report = _demo(tmp_path, "DEMO.PKG_ORDER")
+
+    assert report.recommendation == Recommendation.NOT_RECOMMENDED
+    assert _readiness(report)["decision"] == "on_hold"
+    assert {item.rule_id for item in report.policy.blockers} == {
+        "BLK-INTERFACE-BREAK",
+        "BLK-MISSING-OBJECT",
+        "BLK-COMPILE-FAILURE",
+        "BLK-PARTIAL-COMMIT",
+    }
+    assert {"VAL-DYNAMIC-SQL", "VAL-SECURITY", "VAL-BUSINESS-RULE"} <= {item.rule_id for item in report.policy.validations}
+
+    categories = {finding.change_category for finding in report.findings}
+    assert {"interface", "data", "dependency", "transaction", "dynamic_sql", "security", "error_contract", "business_logic", "compilation"} <= categories
+
+    [breaking] = [item for item in report.findings if item.change_category == "interface" and item.attributes.get("breaking")]
+    assert "P_INCLUDE_TAX" in breaking.evidence and "DEMO.PKG_ORDER_CALLER" in breaking.evidence
+
+    missing = {item.affected_object: item for item in report.findings if item.attributes.get("missing_object")}
+    assert missing["DEMO.ORDER_FEE"].rule_id == "DEP-MISSING-OBJECT"
+    assert missing["DEMO.ORDER_AUDIT"].rule_id == "DATA-MISSING-OBJECT"
+
+    [caller] = [item for item in report.findings if item.rule_id == "CMP-DEPENDENT"]
+    assert caller.object_name == "PKG_ORDER_CALLER" and "PLS-00306" in caller.evidence
+
+    [authid] = [item for item in report.findings if item.attributes.get("authid_changed")]
+    assert "DEFINER to CURRENT_USER" in authid.evidence
+    [grant] = [item for item in report.findings if item.attributes.get("grant_difference") == "missing_in_production"]
+    assert "EXECUTE to DEMO_ORDER_SVC" in grant.evidence
+    [txn] = [item for item in report.findings if item.change_category == "transaction"]
+    assert txn.attributes.get("partial_commit_hazard")
+
+
+def test_lookup_fixture_has_no_breaking_changes(tmp_path):
+    """DEMO.PKG_LOOKUP is identical in both environments, so nothing blocks or holds deployment."""
+    report = _demo(tmp_path, "DEMO.PKG_LOOKUP")
+
+    assert report.recommendation == Recommendation.ELIGIBLE_FOR_REVIEW
+    assert _readiness(report)["decision"] == "recommended"
+    assert report.policy.blockers == [] and report.policy.validations == []
+    assert [item.change_category for item in report.findings] == ["format"]
+    assert all(item.severity.value == "informational" for item in report.findings)
+    assert not any(item.attributes.get("breaking") for item in report.findings)
+
+
 def test_recommended_actions_come_with_scripts_built_from_the_evidence(tmp_path):
     from oracle_impact.controllers.web import TEMPLATES, _sections
     from tests.support import run_demo
 
     dispatch = run_demo(tmp_path / "dispatch", ["DEMO.PKG_DISPATCH"])
     scripts = {item.affected_object or item.rule_id: item.attributes["action_scripts"] for item in dispatch.findings}
-    sequence = "\n".join(script["sql"] for script in scripts["DEMO.DISPATCH_SEQ"])
-    assert "AND object_type IN ('SEQUENCE')" in sequence and "DBMS_METADATA.GET_DDL" in sequence
+    function = "\n".join(script["sql"] for script in scripts["DEMO.NEXT_DISPATCH_ID"])
+    assert "AND object_type IN ('FUNCTION')" in function and "DBMS_METADATA.GET_DDL" in function
     [grant] = next(item.attributes["action_scripts"] for item in dispatch.findings if item.attributes.get("grant_difference"))
     assert "GRANT EXECUTE ON DEMO.PKG_DISPATCH TO DEMO_DISPATCHER;" in grant["sql"]
     for item in dispatch.findings:
@@ -1329,6 +1387,45 @@ def test_recommended_actions_come_with_scripts_built_from_the_evidence(tmp_path)
 
     page = TEMPLATES.get_template("report_body.html").render({"report": dispatch, "sections": _sections(dispatch)})
     assert "for this action" in page and "GRANT EXECUTE ON DEMO.PKG_DISPATCH TO DEMO_DISPATCHER;" in page
+
+
+def test_missing_dependency_does_not_claim_a_test_failure(tmp_path):
+    """DEMO.NEXT_BATCH exists in Test and is absent from Production. A Test call cannot reproduce
+    that failure, so the snippet must not say it will fail in Test and must not repeat a
+    Production goal inside a Test-only script."""
+    from oracle_impact.controllers.web import TEMPLATES
+    from tests.support import run_demo
+
+    report = run_demo(tmp_path, ["DEMO.PKG_DISPATCH"])
+    [finding] = [item for item in report.findings if item.affected_object == "DEMO.NEXT_BATCH"]
+    assert finding.rule_id == "DEP-MISSING-OBJECT"
+
+    [snippet] = finding.attributes["test_snippets"]
+    assert "SELECT CODE INTO v_p_code" in snippet["sql"]
+    assert "P_CODE => v_p_code" in snippet["sql"]
+    assert "P_CODE => 'X'" not in snippet["sql"]
+
+    comments = " ".join(line[3:] for line in snippet["sql"].splitlines() if line.startswith("-- "))
+    assert "expected to fail in Test" not in comments
+    assert "Production would fail the same way" not in comments
+    assert "was not found in Production" in comments
+    assert "Production still has the old one" in comments
+    assert "succeeds there" in comments
+    assert "calls the old package" in comments
+    assert "runs in Test" in comments
+    assert "It does not stop" in comments
+    assert "Goal:" not in comments
+    assert "Run in Test only" in comments
+    assert "could not read a value for P_CODE" not in comments
+    assert "It does not stop" in comments
+    for script in [snippet]:
+        assert all(len(line) <= 80 for line in script["sql"].splitlines())
+
+    page = TEMPLATES.get_template("finding.html").render(
+        {"report": type("R", (), {"run_id": report.run_id})(), "finding": finding}
+    )
+    assert "script should fail in Test" not in page
+    assert "Test scripts to paste into Oracle" not in page
 
 
 def _dispatch_body(report):

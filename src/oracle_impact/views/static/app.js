@@ -604,6 +604,76 @@ function initReport(root) {
     }
   });
 
+  const contextMenu = root.querySelector("[data-context-menu]");
+  if (contextMenu) {
+    let menuFinding = null;
+
+    const findingIdOf = (node) => {
+      const opener = node.closest("[data-open-finding]");
+      if (opener && opener.dataset.openFinding) return opener.dataset.openFinding;
+      const anchor = node.closest("a[href]");
+      if (anchor) {
+        const match = anchor.getAttribute("href").match(/\/findings\/([^/?#]+)/);
+        if (match) return decodeURIComponent(match[1]);
+      }
+      return null;
+    };
+
+    const fullFindingHref = (id) => `${base.replace(/\/report$/, "")}/findings/${encodeURIComponent(id)}`;
+
+    const hideContextMenu = () => {
+      contextMenu.hidden = true;
+      menuFinding = null;
+    };
+
+    const showContextMenu = (id, x, y) => {
+      menuFinding = id;
+      contextMenu.hidden = false;
+      const rect = contextMenu.getBoundingClientRect();
+      const margin = 8;
+      const left = Math.min(Math.max(margin, x), window.innerWidth - rect.width - margin);
+      const top = Math.min(Math.max(margin, y), window.innerHeight - rect.height - margin);
+      contextMenu.style.left = `${left}px`;
+      contextMenu.style.top = `${top}px`;
+      const first = contextMenu.querySelector("button");
+      if (first) first.focus();
+    };
+
+    document.addEventListener("contextmenu", (event) => {
+      if (!root.contains(event.target)) { hideContextMenu(); return; }
+      const id = findingIdOf(event.target);
+      if (!id) { hideContextMenu(); return; }
+      event.preventDefault();
+      showContextMenu(id, event.clientX, event.clientY);
+    });
+
+    document.addEventListener("click", (event) => {
+      if (!contextMenu.hidden && !contextMenu.contains(event.target)) hideContextMenu();
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !contextMenu.hidden) hideContextMenu();
+    });
+
+    document.addEventListener("scroll", hideContextMenu, true);
+
+    contextMenu.addEventListener("focusout", (event) => {
+      if (!contextMenu.contains(event.relatedTarget)) hideContextMenu();
+    });
+
+    contextMenu.querySelector("[data-cm-panel]").addEventListener("click", () => {
+      const id = menuFinding;
+      hideContextMenu();
+      if (id) openFinding(id, { push: true });
+    });
+
+    contextMenu.querySelector("[data-cm-full]").addEventListener("click", () => {
+      const id = menuFinding;
+      hideContextMenu();
+      if (id) window.location.assign(fullFindingHref(id));
+    });
+  }
+
   function showObject(key, options = {}) {
     const views = [...root.querySelectorAll("[data-diff-view]")];
     if (!views.length) return;

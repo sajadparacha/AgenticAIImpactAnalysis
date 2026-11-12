@@ -33,6 +33,7 @@ from oracle_impact.security import (
 from oracle_impact.services.analysis_service import AGENTIC, DETERMINISTIC, AgenticUnavailable, UnknownModel
 from oracle_impact.services.decision_service import ACTION_MESSAGES, ERROR_CODES, ActionError, actor
 from oracle_impact.services.email_view import AUDIENCES, DEVELOPER, build_email, build_eml, recipients
+from oracle_impact.services.fix_plan import ENVIRONMENTS, build_fix_plan, combined_script
 from oracle_impact.services.report_view import build_report_view, initial_state
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
@@ -284,6 +285,26 @@ def install_routes(app: FastAPI) -> None:
             headers={"Content-Disposition": f'attachment; filename="impact-{run_id}-{email["audience"]}.eml"'},
         )
 
+    @app.get("/analyses/{run_id}/fix-plan", response_class=HTMLResponse)
+    def fix_plan_page(request: Request, run_id: str):
+        plan = _fix_plan(request, run_id)
+        if plan is None:
+            return TEMPLATES.TemplateResponse(request, "missing.html", {"run_id": run_id}, status_code=404)
+        return TEMPLATES.TemplateResponse(request, "fix_plan.html", {"plan": plan, "run_id": run_id, "environments": ENVIRONMENTS})
+
+    @app.get("/analyses/{run_id}/fix-plan.sql")
+    def fix_plan_script(request: Request, run_id: str, environment: str = "test"):
+        if environment not in ENVIRONMENTS:
+            return JSONResponse({"error": "environment must be test or production"}, status_code=400)
+        plan = _fix_plan(request, run_id)
+        if plan is None:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return Response(
+            combined_script(plan, environment),
+            media_type="application/sql",
+            headers={"Content-Disposition": f'attachment; filename="fix-plan-{plan["run_id"]}-{environment}.sql"'},
+        )
+
     @app.get("/analyses/{run_id}/export")
     def export_report(request: Request, run_id: str, format: str = "json"):
         report = _with_snippets(request, run_id)
@@ -323,7 +344,7 @@ def _dashboard_context(request: Request, error: str, packages: str, model: str =
         "runs": _runs_for_display(request.app.state.store.list_runs()),
         "csrf_token": csrf_token(settings.secret_key, session),
         "error": error,
-        "fixture_packages": ["DEMO.PKG_STATUS", "DEMO.PKG_BILLING", "DEMO.PKG_DISPATCH"] if settings.fixture_mode else [],
+        "fixture_packages": ["DEMO.PKG_STATUS", "DEMO.PKG_BILLING", "DEMO.PKG_DISPATCH", "DEMO.PKG_ORDER", "DEMO.PKG_LOOKUP"] if settings.fixture_mode else [],
         "submitted_packages": packages,
         "models": models,
         "selected_model": model if model in models else settings.llm_model,
@@ -423,6 +444,14 @@ def _email(request: Request, run_id: str, audience: str) -> dict | None:
         to=recipients(settings.email_developers if audience == DEVELOPER else settings.email_support),
         report_url=f"{base}/analyses/{report.run_id}/report",
     )
+
+
+def _fix_plan(request: Request, run_id: str) -> dict | None:
+    report = _with_snippets(request, run_id)
+    if report is None:
+        return None
+    readiness = request.app.state.decisions.context(report)["readiness"]
+    return build_fix_plan(report, readiness, report_url=f"/analyses/{report.run_id}/report")
 
 
 def _report_context(request: Request, run_id: str, report: Report, interactive: bool = False) -> dict:

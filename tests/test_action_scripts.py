@@ -38,7 +38,7 @@ def test_missing_grant_becomes_grant_statements_for_production():
         },
     )
     [script] = action_scripts_for(finding)
-    assert script["environment"] == "production"
+    assert script["environment"] == "production" and script["stage"] == "after_release"
     assert "GRANT EXECUTE ON APP.PKG_DEMO TO APP_USER;" in _code(script)
     assert "DROP" not in script["sql"]
     assert "table_schema = 'APP'" in script["sql"]
@@ -54,6 +54,7 @@ def test_missing_sequence_extracts_ddl_from_test_then_checks_production():
     finding = _finding(affected_object="APP.ID_SEQ", attributes={"missing_object": True, "missing_type": "SEQUENCE"})
     extract, verify = action_scripts_for(finding)
     assert extract["environment"] == "test" and verify["environment"] == "production"
+    assert extract["stage"] == verify["stage"] == "before_release"
     assert "DBMS_METADATA.GET_DDL(REPLACE(object_type, ' ', '_'), object_name, owner)" in extract["sql"]
     assert "AND object_type IN ('SEQUENCE');" in extract["sql"]
     assert "START WITH" in extract["sql"]
@@ -89,7 +90,7 @@ def test_unverified_dependency_gets_a_read_only_existence_check():
 def test_invalid_body_in_test_is_recompiled_and_errors_are_read():
     finding = _finding(change_category="compilation", object_name="PKG_LEGACY", attributes={"compile_scope": "dependent", "compile_invalid": True})
     [script] = action_scripts_for(finding)
-    assert script["environment"] == "test"
+    assert script["environment"] == "test" and script["stage"] == "fix_in_test"
     assert "ALTER PACKAGE APP.PKG_LEGACY COMPILE BODY;" in _code(script)
     assert "FROM all_errors" in script["sql"] and "AND type = 'PACKAGE BODY'" in script["sql"]
     assert "Fix the source first" in script["sql"]

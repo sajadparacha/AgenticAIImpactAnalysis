@@ -77,26 +77,6 @@
     </dl>
   </section>
 
-  {% if finding.attributes.get('test_snippets') %}
-  <section class="finding-section">
-    <h2>Test scripts to paste into Oracle</h2>
-    <ul class="hint snippet-rules">
-      <li>Run these in Test only. Test has the new package. Production still has the old one.</li>
-      <li>If this finding says an object is missing, the script should fail in Test. That is the error Production would show after the release.</li>
-      <li>This application never runs these scripts.</li>
-    </ul>
-    {% for snippet in finding.attributes.get('test_snippets') %}
-    <div class="sql-snippet">
-      <div class="sql-snippet-bar">
-        <strong>{{ snippet.title }}</strong>
-        <button type="button" data-copy>Copy</button>
-      </div>
-      <pre>{{ snippet.sql }}</pre>
-    </div>
-    {% endfor %}
-  </section>
-  {% endif %}
-
   <p class="caveat">Consequences are predicted from static evidence, not observed. AI text is an interpretation; it cannot confirm a finding or change its severity or readiness.</p>
 </article>
 {% endblock %}

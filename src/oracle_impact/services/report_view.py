@@ -434,7 +434,6 @@ def _row(finding, *, level, category, headline, where, source, note, ai_reviewed
         "todo_from_ai": todo_from_ai,
         "recommended_action": finding.recommended_action if source != "ai" else "",
         "proposed_tests": list(finding.proposed_tests) if source != "ai" else [],
-        "snippets": len(attributes.get("test_snippets") or []),
         "action_scripts": list(attributes.get("action_scripts") or []) if source != "ai" else [],
         "diff_link": diff_link,
         "dependencies": [],
@@ -735,7 +734,7 @@ def _tests(rows: list[dict]) -> list[dict]:
             steps.append({"text": test, "attribution": "Analyzer rule", "from_ai": False})
         if row["ai_todo"] and row["ai_todo"] not in {step["text"] for step in steps}:
             steps.append({"text": row["ai_todo"], "attribution": "AI suggestion, review before use", "from_ai": True})
-        if not steps and not row["snippets"]:
+        if not steps:
             continue
         items.append(
             {
@@ -744,7 +743,6 @@ def _tests(rows: list[dict]) -> list[dict]:
                 "level_label": row["level_label"],
                 "headline": row["headline"],
                 "steps": steps,
-                "snippets": row["snippets"],
             }
         )
     return items

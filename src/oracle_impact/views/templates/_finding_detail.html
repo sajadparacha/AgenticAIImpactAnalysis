@@ -50,9 +50,6 @@
     {% if not row.recommended_action and not row.proposed_tests and not row.ai_todo %}<p class="hint">No investigation steps were recorded.</p>{% endif %}
     {% if row.source != 'ai' %}<p class="hint">Static evidence: {{ row.evidence_label | lower }}.</p>{% endif %}
     <ul class="link-list">
-      {% if row.snippets %}
-      <li><a href="/analyses/{{ view.run_id }}/findings/{{ row.id }}">{{ row.snippets }} SQL test script{{ 's' if row.snippets != 1 }} to run in Test</a></li>
-      {% endif %}
       <li><a href="/analyses/{{ view.run_id }}/findings/{{ row.id }}">Open the full finding page</a></li>
     </ul>
   </div>

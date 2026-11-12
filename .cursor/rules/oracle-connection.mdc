@@ -1,0 +1,10 @@
+---
+description: Run impact analysis against live Oracle, ask before falling back to fixtures
+alwaysApply: true
+---
+
+# Oracle connection
+
+- When preparing an impact analysis report, connect to the live Oracle databases (the configured Test and Production environments).
+- Do not silently fall back to the in-memory fixture catalog.
+- If Oracle is unavailable or cannot be reached, ask for confirmation before using the in-memory route.

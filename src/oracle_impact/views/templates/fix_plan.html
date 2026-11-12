@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% from "_ui.html" import crumbs %}
+{% from "_icons.html" import icon %}
+{% set short_id = run_id[:8] %}
+{% block title %}Fix plan{% endblock %}
+{% block content %}
+{{ crumbs([
+  {'href': '/', 'label': 'New analysis'},
+  {'href': plan.report_url, 'label': 'Run ' ~ short_id, 'title': run_id},
+  {'href': plan.report_url, 'label': 'Impact report'},
+  {'label': 'Fix plan'},
+]) }}
+<section class="page-intro">
+  <div>
+    <h1>Fix plan</h1>
+    <p class="lede">Every open item in this report for {{ plan.packages }}, as numbered steps in the order to do them. {{ plan.total }} step{{ 's' if plan.total != 1 }}: {{ plan.scripted }} with a script, {{ plan.manual }} done by hand.</p>
+  </div>
+</section>
+
+<section class="card fix-plan-card">
+  {% for warning in plan.warnings %}
+  <p class="notice notice-warning">{{ warning }} This plan may be incomplete.</p>
+  {% endfor %}
+  {% if not plan.blockers and not plan.validations %}
+  <p class="notice notice-success">No blocking items or required tests are open. Only the release steps remain.</p>
+  {% endif %}
+  <ul class="hint snippet-rules">
+    <li>Scripts are built from the evidence in this report. Each one names the environment it is for.</li>
+    <li>Review every script with the object owner or a DBA before running it. This application never runs them.</li>
+  </ul>
+  <div class="rv-actions">
+    <button type="button" class="button" data-copy="#fix-plan-text">{{ icon("copy") }} Copy checklist</button>
+    {% for key, label in environments.items() %}
+    {% if plan.scripts[key] %}
+    <a class="button btn-ghost" href="/analyses/{{ run_id }}/fix-plan.sql?environment={{ key }}">{{ icon("download") }} {{ label }} script ({{ plan.scripts[key] }} step{{ 's' if plan.scripts[key] != 1 }})</a>
+    {% endif %}
+    {% endfor %}
+  </div>
+  <details class="fix-plan-text">
+    <summary>Show as a plain checklist</summary>
+    <pre id="fix-plan-text" class="email-body">{{ plan.text }}</pre>
+  </details>
+</section>
+
+{% for section in plan.sections %}
+<section class="card fix-phase" aria-labelledby="phase-{{ section.key }}">
+  <h2 id="phase-{{ section.key }}">{{ section.title }}</h2>
+  <p class="hint">{{ section.intro }}</p>
+  <ol class="fix-steps">
+    {% for step in section.steps %}
+    <li class="fix-step" value="{{ step.number }}">
+      <details{% if step.kind == 'script' %} class="has-script"{% endif %}>
+        <summary>
+          <span class="fix-step-number" aria-hidden="true">{{ step.number }}</span>
+          <span class="fix-step-title">{{ step.title }}</span>
+          <span class="fix-step-tags">
+            {% if step.finding and step.finding.kind == 'blocker' %}<span class="tag tone-danger">Blocking</span>
+            {% elif step.finding and step.finding.kind == 'validation' %}<span class="tag tone-warning">Required test</span>{% endif %}
+            {% if step.environment %}<span class="env-tag">{{ environments[step.environment] }} script</span>
+            {% else %}<span class="tag">By hand</span>{% endif %}
+          </span>
+        </summary>
+        <div class="fix-step-body">
+          {% if step.finding %}
+          <p class="row-meta"><a href="{{ step.finding.href }}">{{ step.finding.id }}</a> · {{ step.finding.where }}</p>
+          {% endif %}
+          {% if step.action %}<p>{{ step.action }}</p>{% endif %}
+          {% if step.tests %}
+          <ul class="plain-list">{% for test in step.tests %}<li>{{ test }}</li>{% endfor %}</ul>
+          {% endif %}
+          {% if step.closing %}<p class="hint">To close it: {{ step.closing }}</p>{% endif %}
+          {% if step.link %}<p><a class="btn-sm" href="{{ step.link.href }}">{{ step.link.label }}</a></p>{% endif %}
+          {% if step.sql %}
+          <div class="sql-snippet">
+            <div class="sql-snippet-bar">
+              <strong>Run in {{ environments[step.environment] }}</strong>
+              <button type="button" data-copy>Copy</button>
+            </div>
+            <pre>{{ step.sql }}</pre>
+          </div>
+          {% endif %}
+        </div>
+      </details>
+    </li>
+    {% endfor %}
+  </ol>
+</section>
+{% endfor %}
+{% endblock %}
