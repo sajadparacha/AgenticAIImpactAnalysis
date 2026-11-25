@@ -34,7 +34,7 @@
         {% elif ready.decision == 'indeterminate' %}
         <p>The reasons are listed in the banner above. No finding-level result is trustworthy until they are resolved.</p>
         {% else %}
-        <p class="empty">{{ icon("circle-check") }} Nothing is holding this deployment. {% if view.approval.latest %}The latest human decision is {{ view.approval.labels[view.approval.latest.decision] }}.{% else %}A person still has to record the deployment decision.{% endif %}</p>
+        <p class="empty">{{ icon("circle-check") }} Nothing is holding this deployment. Record the deployment decision in the banner above.</p>
         {% endif %}
       </section>
 
@@ -63,16 +63,20 @@
         </details>
         {% endif %}
         {% else %}
+        {% if d.hold_rows %}
+        <p class="empty">Clear the items in "What's holding deployment" above.</p>
+        {% else %}
         <p class="empty">No action is outstanding.</p>
+        {% endif %}
         {% endif %}
       </section>
 
+      {% if view.show_top_findings %}
       <section class="card" aria-labelledby="top-findings">
         <div class="card-head">
           <h3 id="top-findings">Top findings</h3>
           {% if not print_mode %}<a href="{{ view.base_url }}?tab=findings" data-goto-tab="findings">All {{ m.findings }} findings →</a>{% endif %}
         </div>
-        {% if view.top_findings %}
         <div class="table-scroll">
           <table class="data-table compact">
             <thead><tr><th scope="col">Severity</th><th scope="col">Finding</th><th scope="col">Object</th><th scope="col">Evidence</th><th scope="col"><span class="sr-only">Details</span></th></tr></thead>
@@ -89,10 +93,8 @@
             </tbody>
           </table>
         </div>
-        {% else %}
-        <p class="empty">No finding drives this recommendation.</p>
-        {% endif %}
       </section>
+      {% endif %}
 
     </div>
   </div>

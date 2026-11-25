@@ -185,6 +185,7 @@ def test_report_tabs_and_filters_render(tmp_path):
     assert "Deployment on hold" in page and "What's holding deployment" in page
     assert "On hold" in page and "Policy result: Deployment on hold" in page
     assert "No decision recorded" in page
+    assert "step-by-step fix plan" in page
     for tile in ("Findings", "Changed objects", "Affected dependencies", "Coverage"):
         assert tile in page
     for key in ("ev", "blk", "env", "chg"):

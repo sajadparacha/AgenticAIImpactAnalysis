@@ -72,6 +72,25 @@ def test_recommendation_comes_from_policy_and_human_decision_is_not_recorded(tmp
     assert not re.search(r"(deployment|change) (approved|rejected)|approved by", page, re.IGNORECASE)
 
 
+def test_next_steps_do_not_duplicate_hold_clearance(tmp_path):
+    report = _reviewed_report(tmp_path)
+    view = build_report_view(report)
+    hold = view["decision"]["hold_rows"]
+    assert hold
+    hold_actions = {row["action"] for row in hold if row.get("action")}
+    next_texts = {step["text"] for step in view["next_steps"]}
+    assert hold_actions and not hold_actions & next_texts
+
+
+def test_show_top_findings_false_when_drivers_are_all_hold_rows(tmp_path):
+    report = _reviewed_report(tmp_path)
+    view = build_report_view(report)
+    hold_ids = {row["finding_id"] for row in view["decision"]["hold_rows"] if row.get("finding_id")}
+    top_ids = {row["id"] for row in view["top_findings"]}
+    assert top_ids and top_ids <= hold_ids
+    assert view["show_top_findings"] is False
+
+
 def test_ai_only_note_is_unrated_and_never_drives_the_decision(tmp_path):
     report = _reviewed_report(tmp_path)
     note = next(finding for finding in report.findings if finding.origin == "investigator")

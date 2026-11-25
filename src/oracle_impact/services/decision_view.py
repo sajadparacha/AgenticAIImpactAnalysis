@@ -96,6 +96,8 @@ def apply_decision(view: dict, report: Report, ctx: dict) -> None:
     view["audit"]["metadata"].append({"label": "Blocking policy", "value": readiness["policy_version"]})
     view["counts"]["objects"] = sum(1 for item in view["objects"] if item["change_type"] not in {"unchanged", "absent"})
     view["next_steps"] = _merged_next_steps(view)
+    hold_ids = {row["finding_id"] for row in hold if row.get("finding_id")}
+    view["show_top_findings"] = any(row["id"] not in hold_ids for row in view["top_findings"])
 
 
 def _merged_next_steps(view: dict) -> list[dict]:
@@ -103,13 +105,44 @@ def _merged_next_steps(view: dict) -> list[dict]:
     next actions, the recorded required actions, and the suggested checks.
 
     Attribution is kept as a badge so the AI's unverified suggestions stay distinct
-    from the deterministic ("Confirmed") guidance.
+    from the deterministic ("Confirmed") guidance. Steps that already appear as a
+    hold row's action or how-it-clears text are not repeated here.
     """
+    hold_rows = view["decision"]["hold_rows"]
+
+    def _norm(text: str) -> str:
+        return " ".join(str(text or "").strip().lower().split())
+
+    hold_actions = {_norm(row.get("action", "")) for row in hold_rows}
+    hold_actions.discard("")
+    clearance_by_finding: dict[str, str] = {}
+    for row in hold_rows:
+        if not row.get("finding_id"):
+            continue
+        clearance = " ".join(
+            part for part in (_norm(row.get("action", "")), _norm(row.get("resolution", ""))) if part
+        )
+        if clearance:
+            clearance_by_finding[row["finding_id"]] = clearance
+
+    def duplicated_with_hold(step: dict) -> bool:
+        text = _norm(step.get("text", ""))
+        if not text:
+            return False
+        finding_id = step.get("finding_id")
+        if finding_id and finding_id in clearance_by_finding:
+            clearance = clearance_by_finding[finding_id]
+            if text in clearance or clearance in text:
+                return True
+        return text in hold_actions
+
     steps: list[dict] = []
     seen: set[str] = set()
 
     def add(step: dict) -> None:
-        key = step["text"].strip().lower()
+        if duplicated_with_hold(step):
+            return
+        key = _norm(step.get("text", ""))
         if key in seen:
             return
         seen.add(key)

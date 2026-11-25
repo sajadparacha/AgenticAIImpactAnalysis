@@ -17,7 +17,6 @@
         <div>
           <p class="eyebrow">Deployment readiness {{ ui.kind('policy') }}</p>
           <p class="state-value">{{ ready.label }}</p>
-          <p>{{ ready.summary }}</p>
           <p class="hint">Policy {{ d.policy_version }}{% if d.policy_computed_now %}, applied now because this report was saved before blocking rules existed{% endif %}. It is a recommendation, not an approval.</p>
         </div>
         <div>
@@ -91,7 +90,9 @@
     <summary><span class="section-title">Recommended tests</span><span class="section-summary">{{ view.tests | length }} finding{{ 's' if view.tests | length != 1 }} with proposed steps</span></summary>
     <div class="section-body">
       <p class="notice notice-info">These tests are recommendations for the people who receive this report. The application does not run them and does not record the results.</p>
-      {% if view.tests %}
+      {% if (ready.open_blockers or 0) + (ready.open_validations or 0) and not print_mode %}
+      <p>Every open item is numbered, with scripts where they apply, in the <a href="/analyses/{{ view.run_id }}/fix-plan">step-by-step fix plan</a>.</p>
+      {% elif view.tests %}
       {% macro test_group(group) %}
         <li>
           <p class="check-head">{{ ui.sev(group.level, group.level_label) }} <a href="{{ ui.finding_href(view, group.finding_id) }}" data-open-finding="{{ group.finding_id }}">{{ group.finding_id }}</a> <span>{{ group.headline }}</span></p>
