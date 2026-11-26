@@ -4,6 +4,24 @@ import html
 
 from oracle_impact.models.report import DependencyRow
 
+_SHORT_TYPE = {
+    "PACKAGE": "spec",
+    "PACKAGE BODY": "body",
+    "PROCEDURE": "procedure",
+    "FUNCTION": "function",
+    "TABLE": "table",
+    "VIEW": "view",
+    "SYNONYM": "synonym",
+    "TRIGGER": "trigger",
+    "SEQUENCE": "sequence",
+    "TYPE": "type",
+}
+
+
+def _type_suffix(object_type: str) -> str:
+    key = (object_type or "").upper()
+    return _SHORT_TYPE.get(key, (object_type or "").lower())
+
 
 def dependency_diagram(packages: list[str], rows: list[DependencyRow]) -> str:
     callers = [row for row in rows if row.direction == "caller"][:6]
@@ -16,9 +34,9 @@ def dependency_diagram(packages: list[str], rows: list[DependencyRow]) -> str:
         f'<rect width="{width}" height="{height}" rx="16" fill="#f8fbfe"/>',
     ]
     parts.extend(_links(len(callers), len(packages), len(uses)))
-    parts.extend(_column(24, "Callers", callers, "#1d4e89"))
+    parts.extend(_column(24, "Callers", callers, "#1d4e89", show_type=True))
     parts.extend(_column(268, "Selected packages", _package_rows(packages), "#12365c"))
-    parts.extend(_column(512, "Referenced objects", uses, "#0f6e56"))
+    parts.extend(_column(512, "Referenced objects", uses, "#475569", show_type=True))
     parts.append("</svg>")
     return "".join(parts)
 
@@ -54,7 +72,7 @@ def _links(callers: int, packages: int, uses: int) -> list[str]:
     return lines
 
 
-def _column(x: int, title: str, rows: list[DependencyRow], color: str) -> list[str]:
+def _column(x: int, title: str, rows: list[DependencyRow], color: str, show_type: bool = False) -> list[str]:
     items = [
         f'<text x="{x}" y="22" fill="#526173" font-size="12" font-family="Segoe UI, sans-serif">{html.escape(title)}</text>'
     ]
@@ -66,6 +84,10 @@ def _column(x: int, title: str, rows: list[DependencyRow], color: str) -> list[s
     for index, row in enumerate(rows):
         y = 40 + index * 42
         label = html.escape(f"{row.owner}.{row.object_name}")
+        if show_type:
+            suffix = _type_suffix(row.object_type)
+            if suffix:
+                label += f" ({html.escape(suffix)})"
         items.append(
             f'<rect x="{x}" y="{y}" width="210" height="32" rx="8" fill="{color}"/>'
             f'<text x="{x + 12}" y="{y + 21}" fill="#ffffff" font-size="12" font-family="Segoe UI, sans-serif">{label}</text>'

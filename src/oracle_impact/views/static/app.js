@@ -30,15 +30,69 @@ if (showAllRuns) {
 }
 
 document.querySelectorAll("[data-copy]").forEach((button) => {
+  const use = button.querySelector("use");
+  const label = button.querySelector(".copy-label");
+  const originalHref = use ? use.getAttribute("href") : null;
+  const originalText = label ? label.textContent : null;
+  const originalLabel = button.getAttribute("aria-label");
+  let timer = null;
+
   button.addEventListener("click", async () => {
-    const value = button.dataset.copy || "";
-    try {
-      await navigator.clipboard.writeText(value);
-      button.setAttribute("aria-label", "Copied");
-      setTimeout(() => button.setAttribute("aria-label", "Copy run ID"), 1600);
-    } catch {
-      /* Clipboard may be unavailable; the run ID stays visible and selectable. */
+    if (button.dataset.busy === "1") return;
+
+    // `data-copy` is either a CSS selector (copy an element's text), a literal
+    // value (copy a run ID verbatim), or empty (copy the nearest SQL snippet).
+    const raw = button.dataset.copy || "";
+    let text = "";
+    let source = null;
+    if (raw && (raw.startsWith("#") || raw.startsWith(".") || raw.startsWith("["))) {
+      try { source = document.querySelector(raw); } catch { source = null; }
+      text = source ? (source.value !== undefined ? source.value : source.textContent || "") : "";
+    } else if (raw) {
+      text = raw;
+    } else {
+      const block = button.closest(".sql-snippet");
+      source = block ? block.querySelector("pre") : null;
+      text = source ? source.textContent : "";
     }
+
+    let state = "copied";
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Clipboard is unavailable; select the source as a manual-copy fallback.
+      if (source && document.body.contains(source)) {
+        const range = document.createRange();
+        range.selectNodeContents(source);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        state = "selected";
+      } else {
+        state = "failed";
+      }
+    }
+
+    const message = { copied: "Copied", selected: "Selected — press Ctrl+C", failed: "Copy failed" }[state];
+    const ariaLabel = { copied: "Copied", selected: "Text selected", failed: "Copy failed" }[state];
+
+    button.dataset.busy = "1";
+    if (use) use.setAttribute("href", state === "copied" ? "/static/icons.svg#check" : originalHref);
+    if (label && originalText !== null) label.textContent = message;
+    button.setAttribute("aria-label", ariaLabel);
+    button.classList.toggle("is-copied", state === "copied");
+    button.classList.toggle("is-copy-failed", state === "failed");
+
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      if (use && originalHref) use.setAttribute("href", originalHref);
+      if (label && originalText !== null) label.textContent = originalText;
+      if (originalLabel !== null) button.setAttribute("aria-label", originalLabel);
+      else button.removeAttribute("aria-label");
+      button.classList.remove("is-copied");
+      button.classList.remove("is-copy-failed");
+      button.dataset.busy = "";
+    }, 1600);
   });
 });
 
@@ -60,13 +114,16 @@ if (approvalDialog) {
 
 const navToggle = document.querySelector("[data-nav-toggle]");
 const siteNav = document.querySelector("[data-site-nav]");
+const navBackdrop = document.querySelector("[data-nav-backdrop]");
 if (navToggle && siteNav) {
   const setNavOpen = (open) => {
     navToggle.setAttribute("aria-expanded", String(open));
     siteNav.classList.toggle("is-open", open);
     navToggle.classList.toggle("is-open", open);
+    if (navBackdrop) navBackdrop.hidden = !open;
   };
   navToggle.addEventListener("click", () => setNavOpen(navToggle.getAttribute("aria-expanded") !== "true"));
+  if (navBackdrop) navBackdrop.addEventListener("click", () => setNavOpen(false));
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && navToggle.getAttribute("aria-expanded") === "true") {
       setNavOpen(false);
@@ -98,10 +155,15 @@ pageStages.forEach((item) => {
 function paintProgress(payload) {
   const current = payload.status || "";
   const currentIndex = stageOrder.indexOf(current);
+  const failedStageIndex = stageOrder.indexOf(payload.failed_stage || "");
   document.querySelectorAll("[data-stage]").forEach((item) => {
     const index = stageOrder.indexOf(item.dataset.stage);
-    item.classList.toggle("done", current === "completed" || (currentIndex > index && index >= 0));
+    const done = current === "completed"
+      || (currentIndex > index && index >= 0)
+      || (current === "failed" && failedStageIndex >= 0 && index < failedStageIndex);
+    item.classList.toggle("done", done);
     item.classList.toggle("current", item.dataset.stage === current && current !== "completed" && current !== "failed");
+    item.classList.toggle("is-failed", current === "failed" && item.dataset.stage === payload.failed_stage);
   });
   const label = document.querySelector("[data-status-label]");
   if (label) {
@@ -126,26 +188,28 @@ function renderActivity(payload) {
   if (!panel) {
     return;
   }
-  const items = payload.activity || [];
+  if (!Array.isArray(payload.activity)) {
+    // Initial paint has no activity payload; keep the server-rendered feed.
+    return;
+  }
+  const items = payload.activity.filter((entry) => entry.kind === "action");
   const investigating = payload.status === "investigating";
   panel.classList.toggle("hidden", !investigating && items.length === 0);
-  const thought = [...items].reverse().find((item) => item.kind === "thought" || item.kind === "action" || item.kind === "status");
-  const thoughtNode = panel.querySelector("[data-model-thought]");
-  if (thoughtNode) {
-    thoughtNode.textContent = thought ? thought.text : "The investigator is deciding what to read.";
-  }
   const list = panel.querySelector("[data-model-actions]");
   if (list) {
     list.replaceChildren();
-    for (const item of items.filter((entry) => entry.kind === "action")) {
+    for (const item of items) {
       const row = document.createElement("li");
-      row.textContent = item.text;
+      const kind = document.createElement("span");
+      kind.className = "activity-kind";
+      kind.textContent = "Read";
+      row.append(kind, document.createTextNode(item.text));
       list.append(row);
     }
   }
-  const thinking = panel.querySelector("[data-model-thinking]");
-  if (thinking) {
-    thinking.classList.toggle("hidden", !investigating);
+  const empty = panel.querySelector("[data-model-empty]");
+  if (empty) {
+    empty.classList.toggle("hidden", items.length > 0);
   }
 }
 
@@ -185,6 +249,7 @@ const root = document.querySelector("[data-poll-status]");
 if (root) {
   paintProgress({
     status: root.dataset.current,
+    failed_stage: root.dataset.failedStage || "",
     detail: document.querySelector("[data-status-label]")?.textContent || "",
   });
   if (root.dataset.terminal === "no") {
@@ -210,26 +275,6 @@ if (root) {
   }
 }
 
-document.querySelectorAll("[data-copy]").forEach((button) => {
-  button.addEventListener("click", async () => {
-    const block = button.closest(".sql-snippet");
-    const pre = button.dataset.copy ? document.querySelector(button.dataset.copy) : block ? block.querySelector("pre") : null;
-    const text = pre ? pre.textContent : "";
-    if (pre) {
-      const range = document.createRange();
-      range.selectNodeContents(pre);
-      const selection = window.getSelection();
-      selection.removeAllRanges();
-      selection.addRange(range);
-    }
-    try {
-      await navigator.clipboard.writeText(text);
-      button.textContent = "Copied";
-    } catch (error) {
-      button.textContent = "Selected";
-    }
-  });
-});
 
 const reportRoot = document.querySelector("[data-report]");
 if (reportRoot && !reportRoot.classList.contains("is-print")) {
@@ -239,7 +284,74 @@ if (reportRoot && !reportRoot.classList.contains("is-print")) {
 function initReport(root) {
   const PAGE = 50;
   const FILTER_KEYS = ["q", "sev", "type", "cat", "src", "ev", "ec", "blk", "env", "chg", "drivers"];
-  const SELECT_KEYS = ["sev", "type", "cat", "src", "ev", "ec", "blk", "env", "chg"];
+  const SELECT_KEYS = ["type", "cat", "src", "ev", "ec", "blk", "env", "chg"];
+  const MULTI_KEYS = ["sev"];
+  const FIELD_LABELS = {
+    q: "Search", sev: "Severity", blk: "Deployment", drivers: "Behind the verdict",
+    type: "Object type", cat: "Category", ev: "Evidence", env: "Environment", chg: "Change type",
+  };
+  const ADVANCED_FILTER_KEYS = ["type", "cat", "ev", "env", "chg"];
+
+  function selectedValues(raw) {
+    return String(raw || "").split(",").map((part) => part.trim()).filter(Boolean);
+  }
+
+  function multiLabel(key, value) {
+    const option = root.querySelector(`[data-multi-option="${key}"][value="${CSS.escape(value)}"]`);
+    if (!option) return value;
+    const label = option.closest("label");
+    return label ? label.textContent.trim() : value;
+  }
+
+  function updateMultiSummary(key) {
+    const details = root.querySelector(`[data-multi-filter="${key}"]`);
+    if (!details) return;
+    const summary = details.querySelector("[data-multi-summary]");
+    if (!summary) return;
+    const values = selectedValues(state.filters[key]);
+    details.classList.toggle("has-value", values.length > 0);
+    if (!values.length) {
+      summary.textContent = "All";
+      return;
+    }
+    const labels = values.map((value) => multiLabel(key, value));
+    summary.textContent = labels.length <= 2 ? labels.join(", ") : `${labels[0]} +${labels.length - 1}`;
+  }
+
+  function syncSeverityLegend() {
+    const legend = root.querySelector("[data-severity-legend]");
+    if (!legend) return;
+    const selected = selectedValues(state.filters.sev);
+    const filtering = selected.length > 0;
+    legend.classList.toggle("is-filtering", filtering);
+    legend.querySelectorAll("[data-legend-sev]").forEach((node) => {
+      const on = !filtering || selected.includes(node.dataset.legendSev);
+      node.classList.toggle("is-active", filtering && on);
+      node.classList.toggle("is-dimmed", filtering && !on);
+    });
+  }
+
+  function setSeverityFilter(values) {
+    const options = [...root.querySelectorAll('[data-multi-option="sev"]')].map((input) => input.value);
+    const unique = [...new Set(values.filter((value) => options.includes(value)))];
+    state.filters.sev = unique.length && unique.length < options.length ? unique.join(",") : "";
+    state.limit = PAGE;
+    syncFilterInputs();
+    applyFindings();
+    writeUrl(false);
+  }
+
+  function toggleSeverity(level) {
+    const options = [...root.querySelectorAll('[data-multi-option="sev"]')].map((input) => input.value);
+    if (!options.includes(level)) return;
+    const selected = selectedValues(state.filters.sev);
+    if (!selected.length) {
+      setSeverityFilter(options.filter((value) => value !== level));
+      return;
+    }
+    if (selected.includes(level)) setSeverityFilter(selected.filter((value) => value !== level));
+    else setSeverityFilter([...selected, level]);
+  }
   const DEP_KEYS = ["dq", "dir", "impact"];
   const EDGE_KEYS = ["eq", "edir", "eprov", "etype"];
   const LEGACY = { comparison: "objects", changes: "findings", dependencies: "dependencies", ai: "details", risk: "overview", limitations: "details", validation: "details", audit: "details", overview: "overview",
@@ -340,6 +452,10 @@ function initReport(root) {
   function rowMatches(row) {
     const f = state.filters;
     if (f.q && !row.dataset.search.includes(f.q.toLowerCase())) return false;
+    for (const key of MULTI_KEYS) {
+      const values = selectedValues(f[key]);
+      if (values.length && !values.includes(row.dataset[key])) return false;
+    }
     for (const key of SELECT_KEYS) {
       if (f[key] && row.dataset[key] !== f[key]) return false;
     }
@@ -382,6 +498,62 @@ function initReport(root) {
       if (button.dataset.sort === state.sort.key) th.setAttribute("aria-sort", state.sort.dir > 0 ? "ascending" : "descending");
       else th.removeAttribute("aria-sort");
     });
+    renderFilterChips();
+    syncSeverityLegend();
+  }
+
+  function addFilterChip(chips, key, label, clearValue) {
+    const chip = document.createElement("span");
+    chip.className = "filter-chip";
+    const text = document.createElement("span");
+    text.textContent = `${FIELD_LABELS[key]}: ${label}`;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.setAttribute("aria-label", `Clear ${FIELD_LABELS[key]} filter${clearValue ? ` ${label}` : ""}`);
+    button.textContent = "×";
+    button.addEventListener("click", () => {
+      if (MULTI_KEYS.includes(key) && clearValue) {
+        state.filters[key] = selectedValues(state.filters[key]).filter((item) => item !== clearValue).join(",");
+      } else {
+        state.filters[key] = "";
+      }
+      state.limit = PAGE;
+      syncFilterInputs();
+      applyFindings();
+      writeUrl(false);
+    });
+    chip.append(text, button);
+    chips.append(chip);
+  }
+
+  function renderFilterChips() {
+    const chips = root.querySelector("[data-filter-chips]");
+    if (!chips) return;
+    chips.replaceChildren();
+    let advancedActive = 0;
+    for (const key of FILTER_KEYS) {
+      const value = state.filters[key];
+      if (!value) continue;
+      if (ADVANCED_FILTER_KEYS.includes(key)) advancedActive += 1;
+      if (MULTI_KEYS.includes(key)) {
+        selectedValues(value).forEach((part) => addFilterChip(chips, key, multiLabel(key, part), part));
+        continue;
+      }
+      let label = value;
+      if (key === "drivers") {
+        label = "On";
+      } else if (key !== "q") {
+        const select = root.querySelector(`[data-filter="${key}"]`);
+        const option = select ? select.querySelector(`option[value="${CSS.escape(value)}"]`) : null;
+        label = option ? option.textContent.trim() : value;
+      }
+      addFilterChip(chips, key, label);
+    }
+    const moreCount = root.querySelector("[data-more-filters-count]");
+    if (moreCount) {
+      moreCount.textContent = String(advancedActive);
+      moreCount.hidden = advancedActive === 0;
+    }
   }
 
   function syncFilterInputs() {
@@ -390,6 +562,21 @@ function initReport(root) {
       if (input.type === "checkbox") input.checked = Boolean(value);
       else input.value = value;
     });
+    MULTI_KEYS.forEach((key) => {
+      const selected = new Set(selectedValues(state.filters[key]));
+      const allOn = selected.size === 0;
+      const allInput = root.querySelector(`[data-multi-all="${key}"]`);
+      if (allInput) {
+        allInput.checked = allOn;
+        allInput.closest(".multi-option")?.classList.toggle("is-selected", allOn);
+      }
+      root.querySelectorAll(`[data-multi-option="${key}"]`).forEach((input) => {
+        input.checked = selected.has(input.value);
+        input.closest(".multi-option")?.classList.toggle("is-selected", input.checked);
+      });
+      updateMultiSummary(key);
+    });
+    syncSeverityLegend();
     root.querySelectorAll("[data-dep-filter]").forEach((input) => {
       input.value = state.dep[input.dataset.depFilter === "q" ? "dq" : input.dataset.depFilter] || "";
     });
@@ -430,6 +617,49 @@ function initReport(root) {
       writeUrl(false);
     };
     input.addEventListener(input.type === "search" ? "input" : "change", handler);
+  });
+  MULTI_KEYS.forEach((key) => {
+    const details = root.querySelector(`[data-multi-filter="${key}"]`);
+    if (!details) return;
+    let closer = null;
+    const allInput = details.querySelector(`[data-multi-all="${key}"]`);
+    const optionInputs = () => [...details.querySelectorAll(`[data-multi-option="${key}"]`)];
+    if (allInput) {
+      allInput.addEventListener("change", () => {
+        if (allInput.checked) setSeverityFilter([]);
+        else {
+          allInput.checked = true;
+          syncFilterInputs();
+        }
+      });
+    }
+    optionInputs().forEach((input) => {
+      input.addEventListener("change", () => {
+        const checked = optionInputs().filter((node) => node.checked).map((node) => node.value);
+        setSeverityFilter(checked);
+      });
+    });
+    details.addEventListener("toggle", () => {
+      if (closer) {
+        document.removeEventListener("pointerdown", closer, true);
+        closer = null;
+      }
+      if (!details.open) return;
+      closer = (event) => {
+        if (details.contains(event.target)) return;
+        details.open = false;
+      };
+      document.addEventListener("pointerdown", closer, true);
+    });
+  });
+  root.querySelectorAll("[data-severity-legend] [data-legend-sev][role='button']").forEach((item) => {
+    const activate = () => toggleSeverity(item.dataset.legendSev);
+    item.addEventListener("click", activate);
+    item.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      activate();
+    });
   });
   root.querySelectorAll("[data-filter-reset]").forEach((button) => {
     button.addEventListener("click", () => {

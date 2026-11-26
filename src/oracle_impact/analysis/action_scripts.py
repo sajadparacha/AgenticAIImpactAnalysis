@@ -142,7 +142,7 @@ def _missing_object_scripts(finding: Finding) -> list[dict[str, str]]:
     verify += _status_query(owner, name, types)
     return [
         {"title": f"Extract the DDL of {owner}.{name} from Test", "environment": "test", "stage": BEFORE_RELEASE, "sql": extract},
-        {"title": f"Create {owner}.{name} in Production and confirm it", "environment": "production", "stage": BEFORE_RELEASE, "sql": verify},
+        {"title": f"Confirm {owner}.{name} exists and is VALID in Production", "environment": "production", "stage": BEFORE_RELEASE, "sql": verify},
     ]
 
 

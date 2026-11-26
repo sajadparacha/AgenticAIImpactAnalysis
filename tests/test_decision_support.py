@@ -190,6 +190,7 @@ def test_report_tabs_and_filters_render(tmp_path):
         assert tile in page
     for key in ("ev", "blk", "env", "chg"):
         assert f'data-filter="{key}"' in page
+    assert 'data-multi-filter="sev"' in page and 'data-multi-option="sev"' in page
     assert 'data-filter="val"' not in page and 'data-filter="ec"' not in page
     assert "Validation and review status" not in page
     assert "CMP-DEPENDENT" in page or "PKG_LEGACY" in page

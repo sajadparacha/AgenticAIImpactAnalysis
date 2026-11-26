@@ -26,8 +26,10 @@ class RunStore:
         detail: str = "",
         lines: list[str] | None = None,
         activity: dict | None = None,
+        error_kind: str = "",
     ) -> None:
         current = self.read_json(run_id, "status.json") or {}
+        previous = current.get("status")
         events = list(current.get("events") or [])
         trail = list(current.get("activity") or [])
         if activity and activity.get("text"):
@@ -59,8 +61,11 @@ class RunStore:
                 "events": events,
                 "steps": steps,
                 "activity": trail,
+                "error_kind": error_kind or current.get("error_kind", ""),
             }
         )
+        if status == "failed" and not current.get("failed_stage"):
+            current["failed_stage"] = previous or ""
         self.write_json(run_id, "status.json", current)
 
     def write_model(self, run_id: str, name: str, model: BaseModel) -> None:
@@ -95,6 +100,7 @@ class RunStore:
                     "mode": request.get("mode") or "deterministic",
                     "model": report.get("model_name") or "",
                     "recommendation": report.get("recommendation_label", ""),
+                    "recommendation_value": report.get("recommendation", ""),
                     "created_at": report.get("created_at", ""),
                     "report_version": report.get("report_version", ""),
                     "requested_ns": requested.stat().st_mtime_ns if requested.exists() else 0,

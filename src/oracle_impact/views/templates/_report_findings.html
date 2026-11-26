@@ -1,23 +1,25 @@
 {% import "_report_macros.html" as ui %}
 {% from "_icons.html" import icon %}
 <section class="rv-panel" id="changes" {{ ui.panel_attrs(state, 'findings', print_mode) }}>
-  <div class="panel-head">
-    <h2>Findings <span class="count-chip">{{ view.counts.findings }}</span></h2>
-    <p class="hint">One row per finding, most severe first. Severity and evidence come from the deterministic checks. An AI note explains a finding; it never changes its severity or the recommendation.</p>
+  <div class="panel-head{% if m.findings %} panel-head-split{% endif %}">
+    <div class="panel-intro">
+      <h2>Findings <span class="count-chip">{{ view.counts.findings }}</span></h2>
+      <p class="hint">One row per finding, most severe first. Severity and evidence come from the deterministic checks. An AI note explains a finding; it never changes its severity or the recommendation.</p>
+    </div>
     {% set total = m.findings %}
     {% if total %}
-    <div class="stack-legend" role="img" aria-label="Findings by severity">
+    <div class="stack-legend" data-severity-legend role="img" aria-label="Findings by severity">
       <svg class="stack-bar" viewBox="0 0 300 10" aria-hidden="true">
         {% set ns = namespace(x=0) %}
         {% for item in m.severity if item.count %}
         {% set width = (item.count / total * 300) %}
-        <rect class="seg seg-{{ item.level }}" x="{{ ns.x | round(2) }}" y="0" width="{{ width | round(2) }}" height="10"/>
+        <rect class="seg seg-{{ item.level }}" data-legend-sev="{{ item.level }}" x="{{ ns.x | round(2) }}" y="0" width="{{ width | round(2) }}" height="10"/>
         {% set ns.x = ns.x + width %}
         {% endfor %}
       </svg>
       <ul class="legend">
         {% for item in m.severity %}
-        <li class="{{ 'is-zero' if not item.count }}"><span class="dot dot-{{ item.level }}" aria-hidden="true"></span>{{ item.label }}<span>{{ item.count }}</span></li>
+        <li class="{{ 'is-zero' if not item.count }}" data-legend-sev="{{ item.level }}"{% if not print_mode and item.count %} role="button" tabindex="0" title="Filter by {{ item.label }}"{% endif %}><span class="dot dot-{{ item.level }}" aria-hidden="true"></span>{{ item.label }}<span>{{ item.count }}</span></li>
         {% endfor %}
       </ul>
     </div>
@@ -27,13 +29,29 @@
   {% if not print_mode %}
   <div class="toolbar" data-findings-filters role="search" aria-label="Filter findings">
     <label class="field field-grow"><span>Search</span><input type="search" data-filter="q" placeholder="Finding, object, ID…" autocomplete="off"></label>
-    <label class="field"><span>Severity</span>
-      <select data-filter="sev"><option value="">All</option>{% for item in view.filters.severity %}<option value="{{ item.value }}">{{ item.label }}</option>{% endfor %}</select>
-    </label>
+    <div class="field">
+      <span id="sev-filter-label">Severity</span>
+      <details class="multi-select" data-multi-filter="sev">
+        <summary class="multi-select-trigger" data-multi-summary aria-labelledby="sev-filter-label">All</summary>
+        <div class="multi-select-menu" role="group" aria-labelledby="sev-filter-label">
+          <label class="multi-option multi-option-all is-selected">
+            <input type="checkbox" value="" data-multi-all="sev" checked>
+            All
+          </label>
+          {% for item in view.filters.severity %}
+          <label class="multi-option">
+            <input type="checkbox" value="{{ item.value }}" data-multi-option="sev">
+            <span class="dot dot-{{ item.value }}" aria-hidden="true"></span>{{ item.label }}
+          </label>
+          {% endfor %}
+        </div>
+      </details>
+    </div>
     <label class="field"><span>Deployment</span>
       <select data-filter="blk"><option value="">All</option>{% for item in view.filters.blocking %}<option value="{{ item.value }}">{{ item.label }}</option>{% endfor %}</select>
     </label>
     <label class="check"><input type="checkbox" data-filter="drivers"> Behind the verdict</label>
+    <button type="button" class="btn-ghost" data-filter-reset>Reset filters</button>
     <details class="disclosure more-filters" data-more-filters>
       <summary>{{ icon("sliders-horizontal") }} More filters <span class="count-chip" data-more-filters-count hidden></span></summary>
       <div class="toolbar-sub">
@@ -55,7 +73,6 @@
       </div>
     </details>
     <div class="filter-chips" data-filter-chips aria-live="polite"></div>
-    <button type="button" class="btn-ghost" data-filter-reset>Reset filters</button>
   </div>
   <p class="result-count" data-result-count aria-live="polite">Showing {{ view.rows | length }} of {{ view.rows | length }} findings</p>
   {% endif %}
@@ -93,7 +110,7 @@
             {% if row.affected_object and row.affected_object != row.object %}<span class="row-meta">Affects <code>{{ row.affected_object }}</code></span>{% endif %}
           </td>
           <td>{{ ui.evidence(row.evidence_badge_key, row.evidence_badge) }}</td>
-          <td>{% if row.policy %}{{ ui.tag(row.blocking_label, 'danger' if row.blocking == 'blocker' else 'warning') }}<span class="row-meta">{{ row.policy_state_label }}</span>{% elif row.source == 'ai' %}<span class="hint">Does not block</span>{% else %}<span class="hint">Does not block</span>{% endif %}</td>
+          <td>{% if row.policy %}{{ ui.blocking_tag(row) }}<span class="row-meta">{{ row.policy_state_label }}</span>{% elif row.source == 'ai' %}<span class="hint">Does not block</span>{% else %}<span class="hint">Does not block</span>{% endif %}</td>
           <td class="row-chevron">{{ icon("chevron-right") }}</td>
         </tr>
         {% endfor %}

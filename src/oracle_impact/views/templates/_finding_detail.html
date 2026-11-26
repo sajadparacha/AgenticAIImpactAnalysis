@@ -7,20 +7,10 @@
     <p class="row-meta">{{ row.id }} · {{ row.category_label }} · {% if row.object %}<code>{{ row.object }}</code> ({{ row.object_type | lower }}){% else %}Object not identified{% endif %}</p>
   </header>
 
-  <div class="block block-observed">
-    <h4><span class="block-no">1</span> What changed</h4>
-    {% if row.source == 'ai' %}
-    <p>No deterministic evidence. This item comes only from the AI investigator and did not match a deterministic finding. Treat it as a lead to check, not a fact.</p>
-    {% else %}
-    {% if row.change_type_label %}<p class="hint">Object change: {{ row.change_type_label }}.</p>{% endif %}
-    <p class="hint">See Evidence below for the captured change.</p>
-    {% endif %}
-  </div>
-
   <div class="block block-verify">
-    <h4><span class="block-no">2</span> Does it block deployment</h4>
+    <h4><span class="block-no">1</span> Does it block deployment</h4>
     {% if row.policy %}
-    <p>{{ ui.tag(row.blocking_label, 'danger' if row.blocking == 'blocker' else 'warning') }} {{ ui.tag(row.policy_state_label, row.policy_state_tone) }}</p>
+    <p>{{ ui.blocking_tag(row) }} {{ ui.tag(row.policy_state_label, row.policy_state_tone) }}</p>
     <p>Rule <code>{{ row.policy.item.rule_id }}</code>: {{ row.policy.item.title }}. {{ row.policy.reason }}</p>
     <p class="hint">How it clears: {{ view.decision.resolutions.get(row.policy.item.resolution, '') }}</p>
     {% elif row.source == 'ai' %}
@@ -30,32 +20,18 @@
     {% endif %}
   </div>
 
-  <div class="block block-next">
-    <h4><span class="block-no">3</span> What to test</h4>
-    {% if row.recommended_action %}
-    <p><span class="attrib">Analyzer rule</span> {{ row.recommended_action }}</p>
+  <div class="block block-observed">
+    <h4><span class="block-no">2</span> What changed</h4>
+    {% if row.source == 'ai' %}
+    <p>No deterministic evidence. This item comes only from the AI investigator and did not match a deterministic finding. Treat it as a lead to check, not a fact.</p>
+    {% else %}
+    {% if row.change_type_label %}<p class="hint">Object change: {{ row.change_type_label }}.</p>{% endif %}
+    {% if row.diff_link %}<p>Changed in <code>{{ row.diff_link.label }}</code>{% if row.diff_link.line %} at {{ row.diff_link.label.split('(')[0] }} line {{ row.diff_link.line }}{% endif %}. The exact lines are in the evidence below.</p>{% else %}<p class="hint">The captured change is in the evidence below.</p>{% endif %}
     {% endif %}
-    {% if row.action_scripts %}
-    <details class="disclosure action-scripts"{% if print_mode %} open{% endif %}>
-      <summary>Script{{ 's' if row.action_scripts | length != 1 }} for this action ({{ row.action_scripts | length }})</summary>
-      {% with scripts = row.action_scripts %}{% include "_action_scripts.html" %}{% endwith %}
-    </details>
-    {% endif %}
-    {% if row.proposed_tests or row.ai_todo %}
-    <ul class="step-list-plain">
-      {% for test in row.proposed_tests %}<li><span class="attrib">Analyzer rule</span> {{ test }}</li>{% endfor %}
-      {% if row.ai_todo and row.ai_todo not in row.proposed_tests %}<li><span class="attrib attrib-ai">AI suggestion, review before use</span> {{ row.ai_todo }}</li>{% endif %}
-    </ul>
-    {% endif %}
-    {% if not row.recommended_action and not row.proposed_tests and not row.ai_todo %}<p class="hint">No investigation steps were recorded.</p>{% endif %}
-    {% if row.source != 'ai' %}<p class="hint">Static evidence: {{ row.evidence_label | lower }}.</p>{% endif %}
-    <ul class="link-list">
-      <li><a href="/analyses/{{ view.run_id }}/findings/{{ row.id }}">Open the full finding page</a></li>
-    </ul>
   </div>
 
   <div class="block">
-    <h4><span class="block-no">4</span> Evidence</h4>
+    <h4><span class="block-no">3</span> Evidence</h4>
     {% if row.source == 'ai' %}
     <p class="hint">The model cited: {{ f.evidence or 'nothing specific' }}. Citations are checked against captured source but are not deterministic evidence.</p>
     {% else %}
@@ -87,6 +63,30 @@
       {% for dep in row.dependencies %}
       <li><a href="{{ view.base_url }}?tab=dependencies#{{ dep.dom_id }}" data-goto-dep="{{ dep.dom_id }}">Dependency: {{ dep.label }}</a> <span class="hint">{{ dep.direction | lower }}</span></li>
       {% endfor %}
+    </ul>
+  </div>
+
+  <div class="block block-next">
+    <h4><span class="block-no">4</span> What to test</h4>
+    {% if row.recommended_action %}
+    <p><span class="attrib">Analyzer rule</span> {{ row.recommended_action }}</p>
+    {% endif %}
+    {% if row.action_scripts %}
+    <details class="disclosure action-scripts"{% if print_mode %} open{% endif %}>
+      <summary>Script{{ 's' if row.action_scripts | length != 1 }} for this action ({{ row.action_scripts | length }})</summary>
+      {% with scripts = row.action_scripts %}{% include "_action_scripts.html" %}{% endwith %}
+    </details>
+    {% endif %}
+    {% if row.proposed_tests or row.ai_todo %}
+    <ul class="step-list-plain">
+      {% for test in row.proposed_tests %}<li><span class="attrib">Analyzer rule</span> {{ test }}</li>{% endfor %}
+      {% if row.ai_todo and row.ai_todo not in row.proposed_tests %}<li><span class="attrib attrib-ai">AI suggestion, review before use</span> {{ row.ai_todo }}</li>{% endif %}
+    </ul>
+    {% endif %}
+    {% if not row.recommended_action and not row.proposed_tests and not row.ai_todo %}<p class="hint">No investigation steps were recorded.</p>{% endif %}
+    {% if row.source != 'ai' %}<p class="hint">Static evidence: {{ row.evidence_label | lower }}.</p>{% endif %}
+    <ul class="link-list">
+      <li><a href="/analyses/{{ view.run_id }}/findings/{{ row.id }}">Open the full finding page</a></li>
     </ul>
   </div>
 

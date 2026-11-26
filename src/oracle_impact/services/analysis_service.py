@@ -166,14 +166,16 @@ class AnalysisService:
                 self._execute_agentic(run_id, packages, chosen_model)
             else:
                 self._execute_deterministic(run_id, packages, chosen_model)
-        except (LookupError, AgenticUnavailable) as exc:
-            self.store.write_status(run_id, "failed", str(exc), detail=str(exc))
+        except LookupError as exc:
+            self.store.write_status(run_id, "failed", str(exc), detail=str(exc), error_kind="missing")
+        except AgenticUnavailable as exc:
+            self.store.write_status(run_id, "failed", str(exc), detail=str(exc), error_kind="analysis")
         except OracleAccessError as exc:
-            self.store.write_status(run_id, "failed", str(exc), detail=str(exc))
+            self.store.write_status(run_id, "failed", str(exc), detail=str(exc), error_kind="connection")
         except Exception:
             logger.exception("analysis failed run_id=%s", run_id)
             message = "The analysis failed before a report could be completed."
-            self.store.write_status(run_id, "failed", message, detail=message)
+            self.store.write_status(run_id, "failed", message, detail=message, error_kind="analysis")
 
     def _execute_deterministic(self, run_id: str, packages: list[PackageRef], chosen_model: str) -> None:
         names = ", ".join(package.qualified for package in packages)
@@ -1046,7 +1048,7 @@ def _impact_for(findings, qualified: str) -> str:
         return "Unknown"
     if any(finding.status.value == "potential" for finding in related):
         return "Potentially affected"
-    return "No incompatible change detected"
+    return "No breaking change in checked scope"
 
 
 def _line_label(finding) -> str:

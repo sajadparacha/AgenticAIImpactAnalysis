@@ -49,6 +49,19 @@ TEMPLATES.env.globals["initial_state"] = initial_state
 SESSION_COOKIE = "oia_session"
 _TABS_AFTER = {"overview", "findings", "objects", "dependencies", "details"}
 
+# The captured recommendation maps to a coarse readiness bucket for the runs list.
+# "Readiness" here is the stored analyzer outcome, not a re-evaluation: a run that
+# finished ("Completed") is distinct from one whose outcome was "Deployment recommended".
+_RECOMMENDATION_READINESS = {
+    "eligible_for_review": ("recommended", "Deployment recommended"),
+    "not_recommended": ("on_hold", "Deployment on hold"),
+    "requires_investigation": ("investigate", "Requires investigation"),
+}
+_RUN_LIFECYCLES = ("completed", "failed", "running", "queued")
+_RUN_MODES = ("deterministic", "agentic")
+_RUN_READINESS = ("recommended", "on_hold", "investigate")
+_RUN_AGES = {"24h": 24, "7d": 24 * 7, "30d": 24 * 30}
+
 
 def install_routes(app: FastAPI) -> None:
     static_dir = PACKAGE_ROOT / "views" / "static"
@@ -125,6 +138,76 @@ def install_routes(app: FastAPI) -> None:
             request,
             "dashboard.html",
             _dashboard_context(request, error, packages, investigate=bool(investigate)),
+        )
+
+    @app.get("/preview", response_class=HTMLResponse)
+    def preview(request: Request):
+        # Isolated branding/icon showcase. No analysis, approval, or email side effects.
+        return TEMPLATES.TemplateResponse(request, "preview.html", {})
+
+    @app.get("/runs", response_class=HTMLResponse)
+    def runs(
+        request: Request,
+        q: str = "",
+        status: str = "",
+        mode: str = "",
+        readiness: str = "",
+        age: str = "",
+        page: int = 1,
+    ):
+        settings = request.app.state.settings
+        rows = _runs_for_display(request.app.state.store.list_runs(), settings.snapshot_stale_hours)
+        query = q.strip().lower()
+        if query:
+            rows = [row for row in rows if query in row["search"]]
+        if status in _RUN_LIFECYCLES:
+            rows = [row for row in rows if row["lifecycle"] == status]
+        if mode in _RUN_MODES:
+            rows = [row for row in rows if row["mode"] == mode]
+        if readiness in _RUN_READINESS:
+            rows = [row for row in rows if row["readiness"] == readiness]
+        if age in _RUN_AGES:
+            rows = _within_age(rows, age)
+        total = len(rows)
+        per_page = 25
+        pages = ((total - 1) // per_page) + 1 if total else 1
+        page = max(1, min(page, pages))
+        start = (page - 1) * per_page
+        page_rows = rows[start : start + per_page]
+        from urllib.parse import urlencode
+
+        page_params = {}
+        if q:
+            page_params["q"] = q
+        if status:
+            page_params["status"] = status
+        if mode:
+            page_params["mode"] = mode
+        if readiness:
+            page_params["readiness"] = readiness
+        if age:
+            page_params["age"] = age
+        return TEMPLATES.TemplateResponse(
+            request,
+            "runs.html",
+            {
+                "rows": page_rows,
+                "total": total,
+                "shown": len(page_rows),
+                "page": page,
+                "pages": pages,
+                "per_page": per_page,
+                "qs": urlencode(page_params),
+                "q": q,
+                "status": status,
+                "mode": mode,
+                "readiness": readiness,
+                "age": age,
+                "statuses": [("", "All statuses"), ("completed", "Completed"), ("failed", "Failed"), ("running", "Running"), ("queued", "Queued")],
+                "modes": [("", "All modes"), ("deterministic", "Checks only"), ("agentic", "AI investigated")],
+                "readiness_options": [("", "All outcomes"), ("recommended", "Deployment recommended"), ("on_hold", "Deployment on hold"), ("investigate", "Requires investigation")],
+                "ages": [("", "Any time"), ("24h", "Last 24 hours"), ("7d", "Last 7 days"), ("30d", "Last 30 days")],
+            },
         )
 
     @app.post("/analyses")
@@ -251,10 +334,12 @@ def install_routes(app: FastAPI) -> None:
         finding = next((item for item in report.findings if item.id == finding_id), None)
         if finding is None:
             return TEMPLATES.TemplateResponse(request, "missing.html", {"run_id": run_id}, status_code=404)
+        context = _report_context(request, run_id, report)
+        row = next((item for item in context["view"]["rows"] if item["id"] == finding_id), None)
         return TEMPLATES.TemplateResponse(
             request,
             "finding.html",
-            {"report": report, "finding": finding},
+            {"report": report, "finding": finding, "view": context["view"], "row": row},
         )
 
     @app.get("/analyses/{run_id}/email", response_class=HTMLResponse)
@@ -341,7 +426,7 @@ def _dashboard_context(request: Request, error: str, packages: str, model: str =
     models = request.app.state.service.available_models()
     return {
         "settings": settings,
-        "runs": _runs_for_display(request.app.state.store.list_runs()),
+        "runs": _runs_for_display(request.app.state.store.list_runs(), settings.snapshot_stale_hours),
         "csrf_token": csrf_token(settings.secret_key, session),
         "error": error,
         "fixture_packages": ["DEMO.PKG_STATUS", "DEMO.PKG_BILLING", "DEMO.PKG_DISPATCH", "DEMO.PKG_ORDER", "DEMO.PKG_LOOKUP"] if settings.fixture_mode else [],
@@ -353,9 +438,13 @@ def _dashboard_context(request: Request, error: str, packages: str, model: str =
     }
 
 
-def _runs_for_display(runs: list[dict]) -> list[dict]:
-    """Add a relative/absolute timestamp and short id for the recent-runs table."""
+def _runs_for_display(runs: list[dict], stale_hours: int = 0) -> list[dict]:
+    """Add a relative/absolute timestamp, short id, freshness, lifecycle, and readiness
+    for the recent-runs table and the read-only runs view. Shared by both so a captured
+    recommendation is always shown beside its current validity."""
     from datetime import datetime, timezone
+
+    from oracle_impact.services.history import freshness
 
     now = datetime.now(timezone.utc)
     result = []
@@ -371,7 +460,7 @@ def _runs_for_display(runs: list[dict]) -> list[dict]:
         if dt is None and requested_ns:
             dt = datetime.fromtimestamp(requested_ns / 1e9, tz=timezone.utc)
         if dt is None:
-            when, title = "—", ""
+            when, title, utc, local = "—", "", "", ""
         else:
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=timezone.utc)
@@ -385,12 +474,59 @@ def _runs_for_display(runs: list[dict]) -> list[dict]:
             else:
                 when = f"{int(seconds // 86400)}d ago"
             title = created_at or dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+            utc = dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+            local_dt = dt.astimezone()
+            local = local_dt.strftime("%Y-%m-%d %H:%M") + " " + local_dt.strftime("%z")
+        status = run.get("status") or "queued"
+        if status == "completed":
+            lifecycle, status_label = "completed", "Completed"
+        elif status == "failed":
+            lifecycle, status_label = "failed", "Failed"
+        elif status in {"", "queued", "unknown"}:
+            lifecycle, status_label = "queued", "Queued"
+        else:
+            lifecycle, status_label = "running", "Running"
+        readiness, readiness_label = _RECOMMENDATION_READINESS.get(run.get("recommendation_value") or "", ("", ""))
+        packages = run.get("packages") or []
         item = dict(run)
         item["when"] = when
         item["when_title"] = title
+        item["utc"] = utc
+        item["local"] = local
         item["short_id"] = run["run_id"][:8]
+        item["freshness"] = freshness(created_at, stale_hours, now)
+        item["search"] = " ".join([run["run_id"], item["short_id"], *packages]).lower()
+        item["lifecycle"] = lifecycle
+        item["status_label"] = status_label
+        item["mode_label"] = "AI investigated" if run.get("mode") == "agentic" else "Checks only"
+        item["readiness"] = readiness
+        item["readiness_label"] = readiness_label
+        item["status_tone"] = {"completed": "neutral", "failed": "danger", "running": "warning", "queued": "neutral"}[lifecycle]
         result.append(item)
     return result
+
+
+def _within_age(rows: list[dict], age: str) -> list[dict]:
+    """Keep only runs captured within the selected window. Rows without a readable
+    capture time are excluded when an age filter is active."""
+    from datetime import datetime, timedelta, timezone
+
+    hours = _RUN_AGES.get(age)
+    if not hours:
+        return rows
+    now = datetime.now(timezone.utc)
+    kept = []
+    for row in rows:
+        created_at = row.get("created_at") or ""
+        try:
+            dt = datetime.fromisoformat(created_at)
+        except ValueError:
+            continue
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        if (now - dt) <= timedelta(hours=hours):
+            kept.append(row)
+    return kept
 
 
 def _read(request: Request, run_id: str, name: str):
@@ -408,7 +544,89 @@ def _load_status(request: Request, run_id: str) -> dict | None:
     request_json = _read(request, run_id, "request.json") or {}
     mode = request_json.get("mode") or "deterministic"
     packages = request_json.get("packages") or []
-    return {"status": status, "report": report, "run_id": run_id, "mode": mode, "packages": packages}
+    settings = request.app.state.settings
+    return {
+        "status": status,
+        "report": report,
+        "run_id": run_id,
+        "mode": mode,
+        "packages": packages,
+        "test_label": settings.test_oracle_label,
+        "prod_label": settings.prod_oracle_label,
+        "error_kind": status.get("error_kind", ""),
+        "failed_stage": status.get("failed_stage", ""),
+        "timing": _status_timing(status),
+    }
+
+
+def _status_timing(status: dict) -> dict:
+    """Earliest and latest recorded activity for the progress page. A failed run carries
+    no report, so timing comes from the recorded steps and events only."""
+    from datetime import datetime, timezone
+
+    started = None
+    updated = None
+    stamps: list[datetime] = []
+    for event in status.get("events") or []:
+        at = event.get("at") or ""
+        try:
+            stamps.append(datetime.fromisoformat(at))
+        except ValueError:
+            continue
+    for step in (status.get("steps") or {}).values():
+        for key in ("started_at", "updated_at"):
+            at = step.get(key) or ""
+            try:
+                stamps.append(datetime.fromisoformat(at))
+            except ValueError:
+                continue
+    if stamps:
+        started = min(stamps)
+        updated = max(stamps)
+    now = datetime.now(timezone.utc)
+    started_iso = started.isoformat() if started else ""
+    updated_iso = updated.isoformat() if updated else ""
+    if started is None:
+        elapsed = ""
+        elapsed_epoch = 0
+    else:
+        end = updated if status.get("status") in {"completed", "failed"} else now
+        elapsed = _elapsed_text(max(0, (end - started).total_seconds()))
+        elapsed_epoch = started.timestamp()
+    return {
+        "started_at": started_iso,
+        "started_epoch": elapsed_epoch,
+        "last_update": updated_iso,
+        "last_update_label": _relative_text(updated, now) if updated else "—",
+        "elapsed": elapsed,
+    }
+
+
+def _elapsed_text(seconds: float) -> str:
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, seconds = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m {seconds}s"
+    hours, minutes = divmod(minutes, 60)
+    if hours < 24:
+        return f"{hours}h {minutes}m"
+    days, hours = divmod(hours, 24)
+    return f"{days}d {hours}h"
+
+
+def _relative_text(ts, now) -> str:
+    if ts is None:
+        return "—"
+    seconds = int((now - ts).total_seconds())
+    if seconds < 10:
+        return "just now"
+    if seconds < 60:
+        return f"{seconds}s ago"
+    if seconds < 3600:
+        return f"{seconds // 60}m ago"
+    return f"{seconds // 3600}h ago"
 
 
 def _with_snippets(request: Request, run_id: str) -> Report | None:

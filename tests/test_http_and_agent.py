@@ -159,6 +159,99 @@ def test_finished_runs_open_the_report_and_unfinished_runs_show_progress(tmp_pat
     assert "The report opens here" not in failed.text
 
 
+def test_failed_run_shows_analysis_failed_title_stage_and_preserved_packages(tmp_path):
+    client = client_for(tmp_path)
+    login(client)
+    store = client.app.state.store
+    store.create("failed-run", ["DEMO.PKG_STATUS"], mode="agentic")
+    store.write_status("failed-run", "comparing", detail="Comparing specifications and bodies.")
+    store.write_status(
+        "failed-run",
+        "failed",
+        error="DEMO.MISSING was not found in Test.",
+        detail="DEMO.MISSING was not found in Test.",
+        error_kind="missing",
+    )
+    page = client.get("/analyses/failed-run", follow_redirects=False)
+    assert page.status_code == 200
+    assert "Analysis failed" in page.text
+    assert "Analysing" not in page.text
+    assert "Failed during Code comparison" in page.text
+    assert "DEMO.MISSING was not found in Test." in page.text
+    assert "DEMO.PKG_STATUS" in page.text
+    assert "Edit packages" in page.text
+
+
+def test_connection_failure_offers_review_environment(tmp_path):
+    client = client_for(tmp_path)
+    login(client)
+    store = client.app.state.store
+    store.create("conn-fail", ["DEMO.PKG_STATUS"])
+    store.write_status("conn-fail", "failed", error="Test could not be reached.", detail="Test could not be reached.", error_kind="connection")
+    page = client.get("/analyses/conn-fail", follow_redirects=False)
+    assert page.status_code == 200
+    assert "Review environment" in page.text
+
+
+def test_progress_activity_hides_planning_narration(tmp_path):
+    client = client_for(tmp_path)
+    login(client)
+    store = client.app.state.store
+    store.create("agentic-run", ["DEMO.PKG_STATUS"], mode="agentic")
+    store.write_status(
+        "agentic-run",
+        "investigating",
+        detail="The investigator is choosing the read order.",
+        activity={"kind": "thought", "text": "I should read the package body before the callers."},
+    )
+    store.write_status(
+        "agentic-run",
+        "investigating",
+        detail="Agentic review finished after 1 tool call.",
+        activity={"kind": "action", "text": "Reading the package source for DEMO.PKG_STATUS in Test."},
+    )
+    page = client.get("/analyses/agentic-run", follow_redirects=False)
+    assert page.status_code == 200
+    assert "Reading the package source for DEMO.PKG_STATUS in Test." in page.text
+    assert "I should read the package body before the callers." not in page.text
+
+
+def test_runs_view_filters_searches_and_paginates(tmp_path):
+    client = client_for(tmp_path)
+    login(client)
+    store = client.app.state.store
+    for index in range(30):
+        run_id = f"run-{index:02d}"
+        store.create(run_id, [f"DEMO.PKG_{index:02d}"])
+        store.write_json(run_id, "report.json", {"created_at": f"2026-11-01T00:{index:02d}:00+00:00", "recommendation": "eligible_for_review", "recommendation_label": "Deployment recommended"})
+    store.create("failed-1", ["DEMO.PKG_STATUS"])
+    store.write_status("failed-1", "failed", error="boom", detail="boom", error_kind="analysis")
+
+    page = client.get("/runs")
+    assert page.status_code == 200
+    assert "31 runs" in page.text
+    assert "Page 1 of 2" in page.text
+    assert "failed-1" in page.text
+    assert "run-29" in page.text
+
+    page2 = client.get("/runs?page=2")
+    assert "Page 2 of 2" in page2.text
+    assert "run-00" in page2.text
+
+    only_failed = client.get("/runs?status=failed")
+    assert "1 run" in only_failed.text
+    assert "failed-1" in only_failed.text
+    assert "run-00" not in only_failed.text
+
+    searched = client.get("/runs?q=DEMO.PKG_STATUS")
+    assert "failed-1" in searched.text
+    assert "run-00" not in searched.text
+
+    recommended = client.get("/runs?readiness=recommended")
+    assert "30 runs" in recommended.text
+    assert "failed-1" not in recommended.text
+
+
 def test_path_traversal_run_id(tmp_path):
     client = client_for(tmp_path)
     login(client)

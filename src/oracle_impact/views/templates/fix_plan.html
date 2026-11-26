@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_ui.html" import crumbs %}
-{% from "_icons.html" import icon %}
+{% from "_icons.html" import icon, status %}
 {% set short_id = run_id[:8] %}
 {% block title %}Fix plan{% endblock %}
 {% block content %}
@@ -29,7 +29,7 @@
     <li>Review every script with the object owner or a DBA before running it. This application never runs them.</li>
   </ul>
   <div class="rv-actions">
-    <button type="button" class="button" data-copy="#fix-plan-text">{{ icon("copy") }} Copy checklist</button>
+    <button type="button" class="button" data-copy="#fix-plan-text">{{ icon("copy") }} <span class="copy-label">Copy checklist</span></button>
     {% for key, label in environments.items() %}
     {% if plan.scripts[key] %}
     <a class="button btn-ghost" href="/analyses/{{ run_id }}/fix-plan.sql?environment={{ key }}">{{ icon("download") }} {{ label }} script ({{ plan.scripts[key] }} step{{ 's' if plan.scripts[key] != 1 }})</a>
@@ -54,8 +54,8 @@
           <span class="fix-step-number" aria-hidden="true">{{ step.number }}</span>
           <span class="fix-step-title">{{ step.title }}</span>
           <span class="fix-step-tags">
-            {% if step.finding and step.finding.kind == 'blocker' %}<span class="tag tone-danger">Blocking</span>
-            {% elif step.finding and step.finding.kind == 'validation' %}<span class="tag tone-warning">Required test</span>{% endif %}
+            {% if step.finding and step.finding.kind == 'blocker' %}<span class="tag tone-danger">{{ status('octagon-alert', 'danger') }}Blocking</span>
+            {% elif step.finding and step.finding.kind == 'validation' %}<span class="tag tone-warning">{{ status('triangle-alert', 'warning') }}Required test</span>{% endif %}
             {% if step.environment %}<span class="env-tag">{{ environments[step.environment] }} script</span>
             {% else %}<span class="tag">By hand</span>{% endif %}
           </span>
@@ -64,6 +64,7 @@
           {% if step.finding %}
           <p class="row-meta"><a href="{{ step.finding.href }}">{{ step.finding.id }}</a> · {{ step.finding.where }}</p>
           {% endif %}
+          {% if step.prerequisite %}<p class="notice notice-warning">{{ step.prerequisite }}</p>{% endif %}
           {% if step.action %}<p>{{ step.action }}</p>{% endif %}
           {% if step.tests %}
           <ul class="plain-list">{% for test in step.tests %}<li>{{ test }}</li>{% endfor %}</ul>
@@ -74,7 +75,7 @@
           <div class="sql-snippet">
             <div class="sql-snippet-bar">
               <strong>Run in {{ environments[step.environment] }}</strong>
-              <button type="button" data-copy>Copy</button>
+              <button type="button" data-copy><span class="copy-label">Copy</span></button>
             </div>
             <pre>{{ step.sql }}</pre>
           </div>

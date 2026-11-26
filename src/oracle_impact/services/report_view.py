@@ -136,6 +136,8 @@ def _base_view(report: Report, status: dict | None) -> dict:
         related = [row for row in rows if row["diff_link"] and row["diff_link"]["key"] == diff["key"]]
         diff["findings"] = related
         diff["level"] = _top_level(related)
+    # Changes list: Critical → High → Medium → Low, then package name, then object type.
+    diffs.sort(key=_diff_rank)
     severity = Counter(row["level"] for row in deterministic)
     evidence = Counter(row["evidence_status"] for row in deterministic)
     drivers = [row for row in rows if row["driver"]]
@@ -578,6 +580,13 @@ def _top_level(rows: list[dict]) -> str:
     return min(levels, key=SEVERITY_ORDER.index) if levels else ""
 
 
+def _diff_rank(diff: dict) -> tuple:
+    """Sort key for the Changes object list: severity, package name, object type."""
+    level = diff.get("level") or ""
+    severity = SEVERITY_ORDER.index(level) if level in SEVERITY_ORDER else len(SEVERITY_ORDER)
+    return (severity, (diff.get("label") or "").upper(), (diff.get("object_type") or "").upper(), diff.get("key") or "")
+
+
 def _mentions(qualified: str, text: str) -> bool:
     return bool(re.search(rf"(?<![\w$#]){re.escape(qualified)}(?![\w$#])", text or ""))
 
@@ -701,11 +710,24 @@ def _filters(rows: list[dict]) -> dict:
 
 def _ai(report: Report, issues: dict) -> dict:
     sources = ai_sources(report)
+    serious = issues["serious"]
+    explained = issues["serious_explained"]
+    if not report.ai_used:
+        summary = "Did not run"
+    elif serious == 0:
+        summary = "No serious findings to explain"
+    elif explained == serious:
+        summary = f"Explained all {serious} serious findings"
+    elif explained == 0:
+        summary = f"Explained 0 of {serious} serious findings"
+    else:
+        summary = f"Explained {explained} of {serious} serious findings"
     return {
         "used": report.ai_used,
         "model": report.model_name,
-        "serious": issues["serious"],
-        "serious_explained": issues["serious_explained"],
+        "serious": serious,
+        "serious_explained": explained,
+        "summary": summary,
         "unexplained": issues["unexplained"] if report.ai_used else [],
         "blind_spots": issues["blind_spots"],
         "reads": sources["reads"],

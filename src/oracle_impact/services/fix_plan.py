@@ -19,12 +19,23 @@ ENVIRONMENTS = {TEST: "Test", PRODUCTION: "Production"}
 VALIDATE, REANALYZE = "validate", "reanalyze"
 _PHASES = (
     (FIX_IN_TEST, "Fix the code in Test", "Change the code in Test until it compiles and every caller works with it."),
-    (BEFORE_RELEASE, "Prepare Production", "Run these in Production before the package is deployed, so everything it needs is already there."),
+    (BEFORE_RELEASE, "Prepare Production", "Get change approval through your normal change process before running these. They make Production changes before the package is deployed, so everything it needs is already there."),
     (VALIDATE, "Test or justify", "Each item needs test evidence or a short written justification. The result is tracked outside this report."),
     (REANALYZE, "Confirm with a new analysis", "Only a new analysis can clear a blocking item."),
     (AFTER_RELEASE, "Release", "Deploy only after a person has approved the change."),
 )
 _RULE = "-- " + "=" * 74 + "\n"
+
+
+def _prerequisite(stage: str, environment: str) -> str | None:
+    """The change-process gate that must come before a Production action."""
+    if environment != PRODUCTION:
+        return None
+    if stage == BEFORE_RELEASE:
+        return "Get change approval through your normal change process before running this in Production."
+    if stage == AFTER_RELEASE:
+        return "Complete the deployment approval and deploy the package before running this in Production."
+    return None
 
 
 def build_fix_plan(report: Report, readiness: dict, *, report_url: str) -> dict:
@@ -53,6 +64,7 @@ def build_fix_plan(report: Report, readiness: dict, *, report_url: str) -> dict:
                     action=finding.recommended_action if index == 0 else "",
                     environment=script["environment"],
                     sql=script["sql"],
+                    prerequisite=_prerequisite(stage, script["environment"]),
                 )
             )
 
@@ -64,7 +76,8 @@ def build_fix_plan(report: Report, readiness: dict, *, report_url: str) -> dict:
             if scripted:
                 continue
             stage = BEFORE_RELEASE if finding.attributes.get("missing_object") else FIX_IN_TEST
-            phases[stage].append(_step(finding, kind, report_url, title=item.title, action=item.required_action))
+            environment = PRODUCTION if stage == BEFORE_RELEASE else TEST
+            phases[stage].append(_step(finding, kind, report_url, title=item.title, action=item.required_action, prerequisite=_prerequisite(stage, environment)))
         else:
             phases[VALIDATE].append(
                 _step(
@@ -104,7 +117,7 @@ def build_fix_plan(report: Report, readiness: dict, *, report_url: str) -> dict:
     number = 0
     sections = []
     for key, title, intro in _PHASES:
-        steps = [{"kind": "manual", "environment": "", "sql": "", "tests": [], "closing": "", "link": None, "finding": None, **step} for step in phases[key]]
+        steps = [{"kind": "manual", "environment": "", "sql": "", "tests": [], "closing": "", "link": None, "finding": None, "prerequisite": None, **step} for step in phases[key]]
         if not steps:
             continue
         for step in steps:
@@ -185,6 +198,8 @@ def render_text(plan: dict) -> str:
             out.append(f"[ ] {step['number']}. {step['title']}{reference}{place}")
             if step["finding"]:
                 out.append(f"      Where: {step['finding']['where']}")
+            if step.get("prerequisite"):
+                out.append(f"      Before this: {step['prerequisite']}")
             if step["action"]:
                 out.append(f"      What to do: {step['action']}")
             out += [f"      Test: {test}" for test in step["tests"]]

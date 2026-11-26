@@ -34,6 +34,7 @@
             <li><a href="/analyses/{{ view.run_id }}/export?format=html">Download HTML</a></li>
             <li><a href="/analyses/{{ view.run_id }}/export?format=pdf">Download PDF</a></li>
             <li><a href="/analyses/{{ view.run_id }}/export?format=json">Download JSON</a></li>
+            <li class="menu-note">Full report: every panel, finding, and appendix.</li>
           </ul>
         </details>
         {% if not print_mode %}
@@ -65,13 +66,17 @@
         <span class="env env-prod" title="{{ view.header.baseline.role }}">{{ view.header.baseline.label }}<small>{{ view.header.baseline.database_id }}</small></span>
       </span>
       <span aria-hidden="true">·</span>
-      <span>Run <code>{{ view.run_id }}</code> <button type="button" class="copy-btn" data-copy="{{ view.run_id }}" aria-label="Copy run ID">{{ icon("copy") }}</button></span>
+      <span>Run <code title="{{ view.run_id }}">{{ short_id }}</code> <button type="button" class="copy-btn" data-copy="{{ view.run_id }}" aria-label="Copy run ID" title="Copy full run ID">{{ icon("copy") }}</button></span>
       {% if view.fixture %}
       <span aria-hidden="true">·</span>
       <span class="tag">Demo data</span>
       {% endif %}
       <span aria-hidden="true">·</span>
       <span class="run-mode">{{ view.header.run_mode_label }}</span>
+      {% if view.ai.used and view.ai.serious > 0 %}
+      <span aria-hidden="true">·</span>
+      <span class="hint">{{ view.ai.summary }}</span>
+      {% endif %}
     </p>
   </header>
 
@@ -151,9 +156,9 @@
     {% for key, label, icon_name, count in [
       ('overview', 'Summary', 'layout-dashboard', none),
       ('findings', 'Findings', 'list-checks', view.counts.findings),
-      ('objects', 'Changes', 'file-diff', view.counts.objects),
+      ('objects', 'Changes', 'git-compare-arrows', view.counts.objects),
       ('dependencies', 'Dependencies', 'network', view.counts.dependencies),
-      ('details', 'Details', 'file-search', none)
+      ('details', 'Details', 'info', none)
     ] %}
     <a role="tab" id="tab-{{ key }}" href="{{ view.base_url }}?tab={{ key }}" data-tab-link="{{ key }}"
        aria-selected="{{ 'true' if state.tab == key else 'false' }}" tabindex="{{ '0' if state.tab == key else '-1' }}">{{ icon(icon_name) }}<span>{{ label }}</span>{% if count is not none %} <span class="count">{{ count }}</span>{% endif %}</a>
@@ -191,7 +196,7 @@
   </aside>
   <nav class="context-menu" data-context-menu hidden aria-label="Finding actions">
     <button type="button" data-cm-panel>{{ icon("layout-dashboard") }}<span>Show in panel</span></button>
-    <button type="button" data-cm-full>{{ icon("external-link") }}<span>Open full finding</span></button>
+    <button type="button" data-cm-full>{{ icon("maximize-2") }}<span>Open full finding</span></button>
   </nav>
   {% endif %}
 </article>

@@ -375,7 +375,7 @@ def _measures(view: dict, readiness: dict, coverage: dict) -> list[dict]:
             "key": "coverage",
             "label": "Coverage",
             "value": f"{coverage['analyzed']} of {coverage['in_scope']} objects" if coverage["recorded"] else None,
-            "note": "in-scope objects fully analyzed" if coverage["recorded"] else "Not recorded in this report version.",
+            "note": "in-scope objects analyzed by the checks" if coverage["recorded"] else "Not recorded in this report version.",
             "tab": "details",
         },
     ]
@@ -397,9 +397,9 @@ def _states(report: Report, readiness: dict, coverage: dict, human: dict) -> lis
     if not coverage["recorded"]:
         coverage_state = ("Not recorded", "neutral", "This report version did not record coverage.")
     elif coverage["complete"]:
-        coverage_state = ("Complete", "success", f"{coverage['analyzed']} of {coverage['in_scope']} in-scope objects analyzed.")
+        coverage_state = ("Complete", "success", f"{coverage['analyzed']} of {coverage['in_scope']} in-scope objects analyzed by the checks.")
     else:
-        coverage_state = ("Incomplete", "warning", f"{coverage['analyzed']} of {coverage['in_scope']} in-scope objects fully analyzed.")
+        coverage_state = ("Incomplete", "warning", f"{coverage['analyzed']} of {coverage['in_scope']} in-scope objects analyzed by the checks.")
     return [
         {
             "label": "Analysis completed",
@@ -430,7 +430,13 @@ def _next_actions(view: dict, readiness: dict, approval: dict, coverage: dict) -
     fix = [entry for entry in readiness["blockers"] if entry["state"] != "resolved" and entry["item"].resolution == FIX_AND_REANALYZE]
     if fix:
         actions.append(
-            {"text": f"Fix {len(fix)} blocking finding{'s' if len(fix) != 1 else ''} in Test, then run a new analysis.", "tab": "details", "kind": "blocker"}
+            {
+                "text": f"Fix {len(fix)} blocking finding{'s' if len(fix) != 1 else ''} in Test, then run a new analysis.",
+                "tab": "details",
+                "kind": "blocker",
+                "href": f"/analyses/{view['run_id']}/fix-plan",
+                "href_label": "Step-by-step fix plan",
+            }
         )
     pending = [
         entry
@@ -443,10 +449,20 @@ def _next_actions(view: dict, readiness: dict, approval: dict, coverage: dict) -
                 "text": f"Test {len(pending)} finding{'s' if len(pending) != 1 else ''} before deployment. Results are not recorded in this report.",
                 "tab": "details",
                 "kind": "validation",
+                "href": f"{view['base_url']}?tab=findings&blk=validation",
+                "href_label": "Required validations",
             }
         )
     if readiness["decision"] == RECOMMENDED and approval["latest"] is None:
-        actions.append({"text": "Record the human deployment decision.", "tab": "overview", "kind": "approval"})
+        actions.append(
+            {
+                "text": "Record the human deployment decision.",
+                "tab": "overview",
+                "kind": "approval",
+                "href": f"{view['base_url']}?tab=details#approval",
+                "href_label": "Record decision",
+            }
+        )
     return actions
 
 
@@ -585,7 +601,7 @@ def _transactions(report: Report, view: dict) -> list[dict]:
 
 
 PROVENANCE_LABELS = {
-    "dictionary": "Verified (ALL_DEPENDENCIES)",
+    "dictionary": "From ALL_DEPENDENCIES",
     "source_scan": "Inferred from source",
     "unresolved": "Unresolved",
 }

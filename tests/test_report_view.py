@@ -82,6 +82,32 @@ def test_next_steps_do_not_duplicate_hold_clearance(tmp_path):
     assert hold_actions and not hold_actions & next_texts
 
 
+def test_next_steps_link_to_exact_destinations(tmp_path):
+    # A missing object produces a fix-and-reanalyze blocker, which links to the fix plan.
+    prod = "PACKAGE BODY pkg_demo AS PROCEDURE run(p_id IN NUMBER) IS BEGIN NULL; END; END;\n"
+    test = "PACKAGE BODY pkg_demo AS PROCEDURE run(p_id IN NUMBER) IS BEGIN INSERT INTO app.ledger_history (id) VALUES (p_id); END; END;\n"
+    test_catalog, prod_catalog = _pair(prod, test)
+    report = run_catalogs(tmp_path, ["APP.PKG_DEMO"], test_catalog, prod_catalog)
+    view = build_report_view(report)
+    by_kind = {step["kind"]: step for step in view["next_steps"]}
+    assert "blocker" in by_kind
+    assert by_kind["blocker"]["href"].endswith("/fix-plan")
+    assert by_kind["blocker"]["href_label"] == "Step-by-step fix plan"
+    if "validation" in by_kind:
+        assert "tab=findings&blk=validation" in by_kind["validation"]["href"]
+
+
+def test_overview_explains_overlapping_counts_and_shortens_run_id(tmp_path):
+    report = _reviewed_report(tmp_path)
+    view = build_report_view(report)
+    page = _render(report)
+    assert "is a work view of the same items" in page
+    assert "different dimensions" in page
+    # The visible run ID is shortened; the full value survives only as copy text/title.
+    assert f'<code title="{report.run_id}">{report.run_id[:8]}</code>' in page
+    assert f'data-copy="{report.run_id}"' in page
+
+
 def test_show_top_findings_false_when_drivers_are_all_hold_rows(tmp_path):
     report = _reviewed_report(tmp_path)
     view = build_report_view(report)
@@ -124,7 +150,74 @@ def test_initial_state_rejects_unknown_deep_link_values(tmp_path):
         assert initial_state(view, {"tab": legacy})["tab"] == resolved
 
 
+def test_changes_object_list_orders_by_severity_then_package_name():
+    from oracle_impact.models.enums import Confidence, Severity
+    from oracle_impact.models.report import EnvironmentInfo, Finding, Report, ReportStatistics
+
+    def _finding(fid, owner, name, object_type, severity):
+        return Finding(
+            id=fid,
+            changed_object=f"{owner}.{name}",
+            object_owner=owner,
+            object_name=name,
+            object_type=object_type,
+            source_database="test",
+            change_category="business_logic",
+            evidence="Line 1 changed.",
+            severity=severity,
+            confidence=Confidence.HIGH,
+            status=EvidenceStatus.CONFIRMED,
+            explanation="changed",
+            recommended_action="review",
+            changed_lines_test=[1],
+        )
+
+    # Intentionally unordered: low package first, then critical packages out of name order.
+    diffs = [
+        build_object_diff("DEMO", "PKG_STATUS", "PACKAGE", "a", "b", "t1", "p1"),
+        build_object_diff("DEMO", "PKG_STATUS", "PACKAGE BODY", "a", "b", "t2", "p2"),
+        build_object_diff("DEMO", "PKG_ORDER", "PACKAGE", "a", "b", "t3", "p3"),
+        build_object_diff("DEMO", "PKG_ORDER", "PACKAGE BODY", "a", "b", "t4", "p4"),
+        build_object_diff("DEMO", "PKG_BILLING", "PACKAGE", "a", "b", "t5", "p5"),
+        build_object_diff("DEMO", "PKG_BILLING", "PACKAGE BODY", "a", "b", "t6", "p6"),
+    ]
+    findings = [
+        _finding("F-LOW-SPEC", "DEMO", "PKG_STATUS", "PACKAGE", Severity.LOW),
+        _finding("F-LOW-BODY", "DEMO", "PKG_STATUS", "PACKAGE BODY", Severity.LOW),
+        _finding("F-CRIT-ORDER-SPEC", "DEMO", "PKG_ORDER", "PACKAGE", Severity.CRITICAL),
+        _finding("F-CRIT-ORDER-BODY", "DEMO", "PKG_ORDER", "PACKAGE BODY", Severity.CRITICAL),
+        _finding("F-CRIT-BILL-SPEC", "DEMO", "PKG_BILLING", "PACKAGE", Severity.CRITICAL),
+        _finding("F-CRIT-BILL-BODY", "DEMO", "PKG_BILLING", "PACKAGE BODY", Severity.CRITICAL),
+        _finding("F-HIGH-BILL-BODY", "DEMO", "PKG_BILLING", "PACKAGE BODY", Severity.HIGH),
+    ]
+    report = Report(
+        run_id="run-order",
+        created_at="2026-11-25T00:00:00+00:00",
+        packages=["DEMO.PKG_STATUS", "DEMO.PKG_ORDER", "DEMO.PKG_BILLING"],
+        test_environment=EnvironmentInfo(role="proposed", label="TEST", database_id="fixture-test", fixture=True),
+        production_environment=EnvironmentInfo(role="baseline", label="PRODUCTION", database_id="fixture-prod", fixture=True),
+        analyzer="fixture",
+        status="completed",
+        recommendation=Recommendation.NOT_RECOMMENDED,
+        recommendation_label="Not recommended",
+        statistics=ReportStatistics(),
+        findings=findings,
+        diffs=diffs,
+    )
+    view = build_report_view(report)
+    ordered = [(diff["label"], diff["object_type"], diff["level"]) for diff in view["diffs"]]
+    assert ordered == [
+        ("DEMO.PKG_BILLING", "PACKAGE", "critical"),
+        ("DEMO.PKG_BILLING", "PACKAGE BODY", "critical"),
+        ("DEMO.PKG_ORDER", "PACKAGE", "critical"),
+        ("DEMO.PKG_ORDER", "PACKAGE BODY", "critical"),
+        ("DEMO.PKG_STATUS", "PACKAGE", "low"),
+        ("DEMO.PKG_STATUS", "PACKAGE BODY", "low"),
+    ]
+
+
 def test_source_diff_collapses_distant_context_and_links_findings(tmp_path):
+
     report = _reviewed_report(tmp_path)
     prod = "\n".join(f"  v_{i} := {i};" for i in range(1, 41))
     test = prod.replace("v_20 := 20;", "v_20 := 21;")
@@ -145,6 +238,19 @@ def test_source_diff_collapses_distant_context_and_links_findings(tmp_path):
     row = next(row for row in view["rows"] if row["id"] == "F-LONG")
     assert row["diff_link"]["key"] == diff["key"] and row["diff_link"]["line"] == 20 and row["diff_link"]["side"] == "t"
     assert [item["id"] for item in diff["findings"]] == ["F-LONG"]
+
+
+def test_diff_table_orders_production_baseline_left_of_test_proposed(tmp_path):
+    report = _reviewed_report(tmp_path)
+    page = _render(report)
+    tables = re.findall(r'<table class="diff-table[^"]*"[^>]*>.*?</table>', page, re.S)
+    assert tables, "diff tables not rendered"
+    for table in tables:
+        thead = table[: table.find("</thead>")]
+        left = thead.find("baseline")
+        right = thead.find("proposed")
+        assert left != -1 and right != -1, f"missing baseline/proposed labels in {thead[:200]}"
+        assert left < right, "Production baseline must be the left column, Test proposed the right column"
 
 
 def test_dependencies_link_findings_by_whole_object_name(tmp_path):
@@ -269,6 +375,71 @@ def test_report_page_keeps_exports_and_legacy_anchors_without_a_presentation_swi
     html = client.get(f"/analyses/{run_id}/export?format=html")
     assert html.status_code == 200
     assert "Known limitations" in html.text and 'role="tablist"' not in html.text
+
+
+def test_finding_page_parity_shows_blocking_status(tmp_path):
+    # A missing object produces a fix-and-reanalyze blocker; the full finding page
+    # must show the same deployment effect the drawer does (A11/A12 parity).
+    prod = "PACKAGE BODY pkg_demo AS PROCEDURE run(p_id IN NUMBER) IS BEGIN NULL; END; END;\n"
+    test = "PACKAGE BODY pkg_demo AS PROCEDURE run(p_id IN NUMBER) IS BEGIN INSERT INTO app.ledger_history (id) VALUES (p_id); END; END;\n"
+    test_catalog, prod_catalog = _pair(prod, test)
+    report = run_catalogs(tmp_path, ["APP.PKG_DEMO"], test_catalog, prod_catalog)
+    view = build_report_view(report)
+    blocker = next(row for row in view["rows"] if row["policy"] and row["blocking"] == "blocker")
+    page = TEMPLATES.get_template("finding.html").render(
+        {"report": report, "finding": blocker["finding"], "view": view, "row": blocker}
+    )
+    assert "Does it block deployment" in page
+    assert "Blocks deployment" in page
+    assert "How it clears" in page
+    assert "What changed" in page and "What to test" in page
+    assert "Internal Server Error" not in page
+
+
+def test_ai_lead_page_renders_hypothesis_and_inherited_severity():
+    from oracle_impact.models.enums import Confidence, Severity
+    from oracle_impact.models.report import EnvironmentInfo, Finding, Report, ReportStatistics
+
+    anchor = Finding(
+        id="F-1", changed_object="APP.PKG_DEMO", object_owner="APP", object_name="PKG_DEMO",
+        object_type="PACKAGE BODY", source_database="test", change_category="dynamic_sql",
+        evidence="CLOSE_ORDER uses dynamic SQL.", severity=Severity.HIGH, confidence=Confidence.LOW,
+        status=EvidenceStatus.POTENTIAL, explanation="CLOSE_ORDER builds SQL while it runs.",
+        recommended_action="Capture the runtime SQL.", rule_id="DYN-SQL",
+    )
+    lead = Finding(
+        id="AI-BS-1", changed_object="APP.PKG_DEMO", object_owner="APP", object_name="PKG_DEMO",
+        object_type="PACKAGE BODY", source_database="test", change_category="dynamic_sql",
+        affected_object="DEMO.OUTBOX", evidence="The AI gave no explanation.",
+        severity=Severity.LOW, confidence=Confidence.LOW, status=EvidenceStatus.POTENTIAL,
+        explanation="Line 20 puts an UPDATE against OUTBOX into a variable and runs it.",
+        recommended_action="Confirm this lead with the suggested test.",
+        proposed_tests=["Read the OUTBOX row for a known id."],
+        attributes={
+            "blind_spot": "dynamic_sql", "subject": "CLOSE_ORDER", "review_of": "F-1",
+            "likely_targets": ["DEMO.OUTBOX"],
+            "checked": [{"environment": "test", "object": "DEMO.OUTBOX", "result": "exists (table)"}],
+            "unknowns": ["Could not see any other OUTBOX name."],
+            "citation_unconfirmed": True,
+        },
+        origin="investigator",
+    )
+    report = Report(
+        run_id="run-1", created_at="2026-11-25T00:00:00+00:00", packages=["APP.PKG_DEMO"],
+        test_environment=EnvironmentInfo(role="proposed", label="TEST", database_id="fixture-test", fixture=True),
+        production_environment=EnvironmentInfo(role="baseline", label="PRODUCTION", database_id="fixture-prod", fixture=True),
+        analyzer="fixture", status="completed",
+        recommendation=Recommendation.REQUIRES_INVESTIGATION, recommendation_label="Requires further investigation",
+        statistics=ReportStatistics(), findings=[anchor, lead],
+    )
+    page = TEMPLATES.get_template("finding.html").render({"report": report, "finding": lead})
+    assert "Unverified AI lead" in page
+    assert "Related finding: High" in page
+    assert "Hypothesis" in page
+    assert "What the AI looked up" in page and "DEMO.OUTBOX" in page
+    assert "Suggested validation" in page and "AI suggestion, review before use" in page
+    assert "Citation" in page and "line references could not be matched" in page
+    assert "Internal Server Error" not in page
 
 
 def _start(client, package: str) -> str:

@@ -1,0 +1,15 @@
+{% macro logo(size=30, cls='', variant='') -%}
+{%- set src = '/static/logo-white.svg' if variant == 'white' else '/static/logo.svg' -%}
+<img class="logo {{ cls }}" src="{{ src }}" alt="" width="{{ size }}" height="{{ size }}">
+{%- endmacro %}
+
+{# Logo lockup. The visible text carries the name; the mark is decorative, so the link's accessible name stays text-only. #}
+{% macro wordmark(strong='ImpactAnalysis', sub='Oracle Package Review', title='Oracle package impact analysis', link=true) -%}
+{%- if link %}<a class="wordmark" href="/" title="{{ title }}">{% else %}<span class="wordmark">{% endif %}
+  <span class="wordmark-mark" aria-hidden="true">{{ logo(28, variant='white') }}</span>
+  <span class="wordmark-text">
+    <strong>{{ strong }}</strong>
+    <small>{{ sub }}</small>
+  </span>
+{%- if link %}</a>{% else %}</span>{% endif %}
+{%- endmacro %}

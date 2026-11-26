@@ -1,3 +1,8 @@
 {% macro icon(name, label=none, cls='') -%}
-<svg class="icon {{ cls }}"{% if label %} role="img" aria-label="{{ label }}"{% else %} aria-hidden="true" focusable="false"{% endif %}><use href="/static/icons.svg#{{ name }}"></use></svg>
+<svg class="icon {{ cls }}" viewBox="0 0 24 24"{% if label %} role="img" aria-label="{{ label }}"{% else %} aria-hidden="true" focusable="false"{% endif %}><use href="/static/icons.svg#{{ name }}"></use></svg>
+{%- endmacro %}
+
+{# Decorative status glyph. The meaning always travels in adjacent visible text; color is never the only indicator. #}
+{% macro status(name, tone='') -%}
+<svg class="icon status-icon{% if tone %} icon-tone-{{ tone }}{% endif %}" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="/static/icons.svg#{{ name }}"></use></svg>
 {%- endmacro %}

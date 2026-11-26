@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon, status %}
+{% from "_brand.html" import logo, wordmark %}
+{% block title %}Branding &amp; icon preview{% endblock %}
+{% block content %}
+<section class="page-intro">
+  <div>
+    <h1>Branding &amp; icon preview</h1>
+    <p class="lede">Isolated showcase of the logo system, action icons, and status treatments. No analysis, approval, or email actions run on this page.</p>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="card-head"><h2>Logo lockup</h2></div>
+  <div class="preview-grid">
+    <div class="preview-cell">{{ wordmark(link=false) }}</div>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="card-head"><h2>Logo variants</h2></div>
+  <div class="preview-grid">
+    <div class="preview-cell">
+      <img src="/static/logo.svg" alt="" width="64" height="64">
+      <small>Full color</small>
+    </div>
+    <div class="preview-cell">
+      <img src="/static/logo-mono.svg" alt="" width="64" height="64">
+      <small>Monochrome</small>
+    </div>
+    <div class="preview-cell on-navy">
+      <img src="/static/logo-white.svg" alt="" width="64" height="64">
+      <small>White on navy</small>
+    </div>
+    <div class="preview-cell">
+      <img src="/static/favicon.svg" alt="" width="32" height="32">
+      <small>Favicon (SVG)</small>
+    </div>
+  </div>
+  <p class="hint">Recognizability at small sizes:</p>
+  <div class="preview-sizes">
+    <img src="/static/logo.svg" alt="" width="16" height="16">
+    <img src="/static/logo.svg" alt="" width="24" height="24">
+    <img src="/static/logo.svg" alt="" width="32" height="32">
+  </div>
+</section>
+
+<section class="panel">
+  <div class="card-head"><h2>Action icons</h2></div>
+  <div class="icon-row">
+    {% for name, label in [
+      ('plus', 'New analysis'), ('play', 'Start analysis'), ('history', 'Run history'),
+      ('layout-dashboard', 'Summary'), ('list-checks', 'Findings'), ('git-compare-arrows', 'SQL comparison'),
+      ('network', 'Dependencies'), ('info', 'Details'), ('scan-search', 'AI investigation'),
+      ('file-search', 'View evidence'), ('clipboard-list', 'Fix plan'), ('copy', 'Copy SQL / run ID'),
+      ('check', 'Successful copy'), ('download', 'Export'), ('mail', 'Prepare email'),
+      ('search', 'Search'), ('sliders-horizontal', 'More filters'), ('rotate-ccw', 'Reset filters'),
+      ('maximize-2', 'Expand view'), ('external-link', 'Open full finding'), ('circle-help', 'Help'),
+      ('x', 'Close drawer'), ('log-out', 'Sign out')
+    ] %}
+    <span class="item">{{ icon(name) }}<span>{{ label }}</span></span>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="panel">
+  <div class="card-head"><h2>Status treatments</h2></div>
+  <div class="icon-row">
+    <span class="item">{{ status('octagon-alert', 'danger') }}<span>Blocking issue</span></span>
+    <span class="item">{{ status('triangle-alert', 'warning') }}<span>Validation required</span></span>
+    <span class="item">{{ status('badge-check', 'info') }}<span>Confirmed evidence</span></span>
+    <span class="item">{{ status('circle-help', 'ai') }}<span>Unverified AI lead</span></span>
+    <span class="item">{{ status('circle-check', 'success') }}<span>Passed check</span></span>
+    <span class="item">{{ status('loader-circle', 'info') }}<span>Running</span></span>
+    <span class="item">{{ status('clock-alert', 'warning') }}<span>Expired snapshot</span></span>
+  </div>
+</section>
+{% endblock %}

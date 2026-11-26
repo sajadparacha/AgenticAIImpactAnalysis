@@ -104,7 +104,7 @@ def test_grants_follow_the_deployment_and_ai_leads_are_not_steps(tmp_path):
     titles = [step["title"] for step in steps]
     deploy = titles.index("Deploy DEMO.PKG_DISPATCH to Production")
     grant = next(index for index, title in enumerate(titles) if title.startswith("Grant access"))
-    create = next(index for index, title in enumerate(titles) if title.startswith("Create DEMO.NEXT_BATCH"))
+    create = next(index for index, title in enumerate(titles) if title.startswith("Confirm DEMO.NEXT_BATCH"))
     assert create < deploy < grant
     assert plan["blockers"] == readiness["open_blockers"] and plan["validations"] == readiness["open_validations"]
     open_ids = {entry["item"].finding_id for entry in readiness["blockers"] + readiness["validations"]}

@@ -2,7 +2,7 @@
 <section class="rv-panel" id="dependencies" {{ ui.panel_attrs(state, 'dependencies', print_mode) }}>
   <div class="panel-head">
     <h2>Dependencies</h2>
-    <p class="hint">Callers and referenced objects read from the Oracle dependency dictionary of the named database, to a limited depth. Linked findings are those whose changed object, affected object, or call path names the edge's object.</p>
+    <p class="hint">Two views of the same relationships, so their counts differ. "All edges" lists each dictionary or source observation with its provenance, keeping specification and body apart. "Dependencies" is the deployment-impact view: one row per distinct object with its impact classification. Both are read to a limited depth. Linked findings are those whose changed object, affected object, or call path names the edge's object.</p>
   </div>
 
   {% if view.dep_tree %}
@@ -37,6 +37,7 @@
   {% if view.edges %}
   <div class="card">
     <div class="card-head"><h3>All edges with provenance <span class="count-chip">{{ view.edges | length }}</span></h3></div>
+    <p class="hint">Each observed relationship, merged by direction, provenance, and environment, with specification and body kept apart. The count can be higher than the impact table below because it does not collapse distinct objects.</p>
     {% if not print_mode %}
     <div class="toolbar" data-edge-filters role="search" aria-label="Filter edges">
       <label class="field field-grow"><span>Search</span><input type="search" data-edge-filter="eq" placeholder="Object, type…" autocomplete="off"></label>
@@ -44,7 +45,7 @@
         <select data-edge-filter="edir"><option value="">All</option><option value="caller">Calls</option><option value="uses">Uses</option></select>
       </label>
       <label class="field"><span>Provenance</span>
-        <select data-edge-filter="eprov"><option value="">All</option>{% for key, label in [('dictionary', 'Verified (ALL_DEPENDENCIES)'), ('source_scan', 'Inferred from source'), ('unresolved', 'Unresolved')] if view.edges | selectattr('provenance', 'equalto', key) | list %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select>
+        <select data-edge-filter="eprov"><option value="">All</option>{% for key, label in [('dictionary', 'From ALL_DEPENDENCIES'), ('source_scan', 'Inferred from source'), ('unresolved', 'Unresolved')] if view.edges | selectattr('provenance', 'equalto', key) | list %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select>
       </label>
       <label class="field"><span>Object type</span>
         <select data-edge-filter="etype"><option value="">All</option>{% for kind in view.edges | map(attribute='other_type') | unique | sort %}<option value="{{ kind }}">{{ kind | lower }}</option>{% endfor %}</select>
@@ -81,6 +82,8 @@
   </details>
   {% endif %}
   {% if view.dependencies %}
+  <div class="card-head"><h3>Dependencies and impact <span class="count-chip">{{ view.dependencies | length }}</span></h3>{{ ui.kind('det') }}</div>
+  <p class="hint">One row per distinct object, with the deployment impact the checks found for it. "Affected dependencies" on the summary counts the rows marked Affected here.</p>
   {% if not print_mode %}
   <div class="toolbar" data-dep-filters role="search" aria-label="Filter dependencies">
     <label class="field field-grow"><span>Search</span><input type="search" data-dep-filter="q" placeholder="Object, type…" autocomplete="off"></label>

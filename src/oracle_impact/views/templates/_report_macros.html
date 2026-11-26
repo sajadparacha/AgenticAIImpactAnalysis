@@ -1,3 +1,4 @@
+{% from "_icons.html" import status %}
 {% macro sev(level, label) -%}
 <span class="sev sev-{{ level or 'none' }}">{{ label or "None" }}</span>
 {%- endmacro %}
@@ -7,7 +8,7 @@
 {%- endmacro %}
 
 {% macro evidence(key, label) -%}
-<span class="ev ev-{{ key }}">{{ label }}</span>
+<span class="ev ev-{{ key }}">{%- if key == 'confirmed' %}{{ status('badge-check', 'info') }}{% elif key == 'ai' %}{{ status('circle-help', 'ai') }}{% endif %}{{ label }}</span>
 {%- endmacro %}
 
 {% macro kind(key) -%}
@@ -30,8 +31,19 @@
 {{ view.base_url }}?tab=objects&amp;object={{ link.key | urlencode }}{% if link.line %}&amp;line={{ link.line }}&amp;side={{ link.side }}{% endif %}
 {%- endmacro %}
 
-{% macro tag(label, tone) -%}
-<span class="tag tone-{{ tone or 'neutral' }}">{{ label }}</span>
+{% macro tag(label, tone, icon_name=none) -%}
+<span class="tag tone-{{ tone or 'neutral' }}">{% if icon_name %}{{ status(icon_name, tone) }}{% endif %}{{ label }}</span>
+{%- endmacro %}
+
+{# Deployment impact tag with the matching status glyph. #}
+{% macro blocking_tag(row) -%}
+{%- if row.blocking == 'blocker' -%}
+<span class="tag tone-danger">{{ status('octagon-alert', 'danger') }}{{ row.blocking_label }}</span>
+{%- elif row.blocking == 'validation' -%}
+<span class="tag tone-warning">{{ status('triangle-alert', 'warning') }}{{ row.blocking_label }}</span>
+{%- else -%}
+<span class="tag tone-neutral">{{ row.blocking_label }}</span>
+{%- endif -%}
 {%- endmacro %}
 
 {% macro form_head(view, return_tab) -%}

@@ -2,15 +2,30 @@
 {% from "_ui.html" import crumbs %}
 {% from "_icons.html" import icon %}
 {% set package_label = packages | join(" · ") if packages else "selected packages" %}
-{% block title %}Analysing {{ package_label }}{% endblock %}
+{% set failed = status.status == "failed" %}
+{% set activity_actions = (status.activity or []) | selectattr("kind", "equalto", "action") | list %}
+{% block title %}{% if failed %}Analysis failed{% else %}Analysing {{ package_label }}{% endif %}{% endblock %}
 {% block content %}
 {{ crumbs([{"label": "New analysis", "href": "/"}, {"label": "Run " ~ run_id[:8], "title": run_id}, {"label": "Progress"}]) }}
 <section class="page-intro">
   <div>
-    <h1>Analysing {{ package_label }}</h1>
+    <h1>{% if failed %}Analysis failed{% else %}Analysing {{ package_label }}{% endif %}</h1>
+    <p class="lede">
+      {% if failed %}
+        The run could not finish. Its packages and the failing stage are preserved below.
+      {% else %}
+        {{ test_label }} → {{ prod_label }} ·
+        {% if mode == "agentic" %}the AI investigator chooses what to read; deterministic checks score the reads.{% else %}deterministic checks only.{% endif %}
+      {% endif %}
+    </p>
   </div>
   <p class="badge badge-{{ status.status }}">{{ status.status }}</p>
 </section>
+
+<dl class="run-meta" aria-label="Run timing">
+  <div class="run-meta-item"><dt>Elapsed</dt><dd>{{ timing.elapsed or "—" }}</dd></div>
+  <div class="run-meta-item"><dt>Last update</dt><dd>{{ timing.last_update_label }}</dd></div>
+</dl>
 
 {% if mode == "agentic" %}
 {% set stage_labels = {
@@ -33,30 +48,61 @@
   "completed": "Complete"
 } %}
 {% endif %}
-<ol class="stages" data-poll-status="/analyses/{{ run_id }}/status" data-report-url="/analyses/{{ run_id }}/report" data-current="{{ status.status }}" data-terminal="{{ 'yes' if status.status in ['completed', 'failed'] else 'no' }}">
+<ol class="stages" data-poll-status="/analyses/{{ run_id }}/status" data-report-url="/analyses/{{ run_id }}/report" data-current="{{ status.status }}" data-failed-stage="{{ failed_stage }}" data-terminal="{{ 'yes' if status.status in ['completed', 'failed'] else 'no' }}">
   {% for stage, label in stage_labels.items() %}
-  <li data-stage="{{ stage }}">
+  <li data-stage="{{ stage }}"{% if failed and stage == failed_stage %} class="is-failed"{% endif %}>
     <span class="stage-icon stage-icon-done" aria-hidden="true">{{ icon("circle-check") }}</span>
+    <span class="stage-icon stage-icon-failed" aria-hidden="true">{{ icon("octagon-x") }}</span>
     <span class="stage-icon stage-icon-current" aria-hidden="true">{{ icon("circle-dashed") }}</span>
     <span class="stage-icon stage-icon-pending" aria-hidden="true">{{ icon("circle") }}</span>
     <span>{{ label }}</span>
   </li>
   {% endfor %}
 </ol>
-<section class="model-activity {% if status.status != 'investigating' and not status.activity %}hidden{% endif %}" data-model-activity>
-  <p data-model-thought>{% if status.activity %}{{ status.activity[-1].text }}{% else %}The investigator is deciding what to read.{% endif %}</p>
-  <ol data-model-actions>
-    {% for item in status.activity or [] if item.kind == 'action' %}
-    <li>{{ item.text }}</li>
+
+{% if failed %}
+<section class="failure" role="alert">
+  <div class="failure-head">
+    <span class="failure-mark" aria-hidden="true">{{ icon("octagon-x") }}</span>
+    <div>
+      <h2 class="failure-title">Analysis failed</h2>
+      {% if failed_stage and failed_stage != "queued" %}
+      <p class="failure-stage">Failed during {{ stage_labels.get(failed_stage, failed_stage) }}</p>
+      {% else %}
+      <p class="failure-stage">Failed before the analysis began.</p>
+      {% endif %}
+    </div>
+  </div>
+  <p class="failure-error">{{ status.error or status.detail or "The analysis could not be completed." }}</p>
+  <p class="failure-packages"><span>Packages</span><code>{{ packages | join(" · ") or "—" }}</code></p>
+  <div class="failure-actions">
+    {% if error_kind == "missing" %}
+      <a class="button" href="/?packages={{ packages | join(', ') | urlencode }}">{{ icon("plus") }} Edit packages</a>
+    {% elif error_kind == "connection" %}
+      <a class="button" href="/">{{ icon("database") }} Review environment</a>
+    {% else %}
+      <a class="button" href="/?packages={{ packages | join(', ') | urlencode }}">{{ icon("play") }} Start again</a>
+    {% endif %}
+    <a class="btn-sm" href="/runs">View all runs</a>
+  </div>
+</section>
+{% else %}
+<section class="investigator-activity {% if status.status != 'investigating' and not activity_actions %}hidden{% endif %}" data-model-activity>
+  <h2 class="activity-heading">{{ icon("list-checks") }} Investigator activity</h2>
+  <ol class="activity-feed" data-model-actions>
+    {% for item in activity_actions %}
+    <li><span class="activity-kind">Read</span><span>{{ item.text }}</span></li>
     {% endfor %}
   </ol>
-  <p class="thinking-label {% if status.status != 'investigating' %}hidden{% endif %}" data-model-thinking>Thinking</p>
+  <p class="activity-empty {% if activity_actions %}hidden{% endif %}" data-model-empty>The investigator has not read anything yet.</p>
 </section>
-<div class="spinner-row {% if status.status in ['completed', 'failed', 'investigating'] %}hidden{% endif %}" data-spinner role="status" aria-label="Analysis in progress">
-  <span class="spinner" aria-hidden="true"></span>
+<div class="spinner-row {% if status.status == 'investigating' %}hidden{% endif %}" data-spinner role="status">
+  {{ icon("loader-circle", cls="icon-spin icon-tone-info") }}
   <span>Analysis in progress</span>
 </div>
-<p class="hint" data-status-label>{{ status.detail or status.status }}</p>
+<p class="hint" data-status-label aria-live="polite">{{ status.detail or status.status }}</p>
+{% endif %}
+
 <details class="disclosure run-log" data-run-log>
   <summary>{{ icon("history") }} Show run log</summary>
   <div class="step-list" data-progress-steps>
@@ -77,11 +123,6 @@
     {% endfor %}
   </div>
 </details>
-{% if status.error %}
-<div class="banner banner-error" data-status-error>
-  <p>{{ status.error }}</p>
-  <a class="button" href="/?packages={{ packages | join(', ') | urlencode }}">Start again</a>
-</div>
-{% endif %}
+
 {% if status.status not in ["completed", "failed"] %}<p class="hint" data-report-hint>The report opens here when the analysis finishes.</p>{% endif %}
 {% endblock %}

@@ -13,6 +13,7 @@ from oracle_impact.services.change_classification import classify_changes
 from oracle_impact.services.history import (
     age_text,
     compare_runs,
+    freshness,
     previous_run,
     related_runs,
     stale_reason,
@@ -88,7 +89,10 @@ class DecisionService:
                 "stale": bool(latest and latest.get("readiness") != readiness["decision"]),
             },
             "history": {
-                "runs": related_runs(runs, report.packages),
+                "runs": [
+                    {**run, "freshness": freshness(run.get("created_at"), self.settings.snapshot_stale_hours, now)}
+                    for run in related_runs(runs, report.packages)
+                ],
                 "superseded_by": newer,
                 "previous": earlier,
                 "comparison": comparison,

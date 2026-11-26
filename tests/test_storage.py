@@ -63,6 +63,25 @@ def test_status_keeps_bounded_events_steps_and_activity(tmp_path):
     assert status["steps"]["queued"]["summary"] == "Analysis queued."
 
 
+def test_status_records_error_kind_and_failed_stage(tmp_path):
+    store = RunStore(tmp_path)
+    store.create("run-1", ["APP.PKG"])
+    store.write_status("run-1", "snapshotting", detail="Reading source.")
+    store.write_status("run-1", "failed", error="Production is unreachable.", detail="Production is unreachable.", error_kind="connection")
+    status = store.read_json("run-1", "status.json")
+    assert status["error_kind"] == "connection"
+    assert status["failed_stage"] == "snapshotting"
+
+
+def test_list_runs_exposes_captured_recommendation_value(tmp_path):
+    store = RunStore(tmp_path)
+    store.create("run-1", ["APP.PKG"])
+    store.write_json("run-1", "report.json", {"created_at": "2026-10-01T00:00:00+00:00", "recommendation": "eligible_for_review", "recommendation_label": "Deployment recommended"})
+    runs = store.list_runs()
+    assert runs[0]["recommendation"] == "Deployment recommended"
+    assert runs[0]["recommendation_value"] == "eligible_for_review"
+
+
 def test_registry_numbers_object_versions_and_tracks_last_seen(tmp_path):
     registry = Registry(tmp_path / "reg")
     entry = {"environment": "test", "owner": "APP", "name": "PKG", "object_type": "PACKAGE BODY", "sha256": "a" * 64, "captured_at": "t1"}

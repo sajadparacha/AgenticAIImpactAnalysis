@@ -64,6 +64,27 @@ def stale_reason(report: Report, hours: int, now: datetime | None = None) -> str
     return f"The snapshot is {_age(age)} old, beyond the {hours} hour freshness limit. Run a new analysis."
 
 
+def freshness(created_at: str | None, hours: int, now: datetime | None = None) -> dict:
+    """Age and current staleness for a run identified by its capture time alone.
+
+    Shared by the report run-history and the dashboard recent-runs list so that a
+    historical recommendation is always shown beside its current validity, without
+    rewriting the stored outcome. ``hours <= 0`` means freshness is not enforced.
+    """
+    now = now or datetime.now(timezone.utc)
+    created = _parse(created_at)
+    if created is None:
+        return {"age": "unknown", "stale": False, "reason": None}
+    age = now - created
+    if hours <= 0 or age <= timedelta(hours=hours):
+        return {"age": _age(age), "stale": False, "reason": None}
+    return {
+        "age": _age(age),
+        "stale": True,
+        "reason": f"The snapshot is {_age(age)} old, beyond the {hours} hour freshness limit. Run a new analysis.",
+    }
+
+
 def age_text(report: Report, now: datetime | None = None) -> str:
     created = _parse(report.created_at)
     if created is None:

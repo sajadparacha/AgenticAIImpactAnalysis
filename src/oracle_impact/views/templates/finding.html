@@ -1,11 +1,19 @@
 {% extends "base.html" %}
 {% from "_ui.html" import crumbs %}
+{% import "_report_macros.html" as ui %}
 {% block title %}{{ finding.id }}{% endblock %}
 {% block content %}
 {% set is_ai = finding.origin == 'investigator' %}
+{% set is_lead = is_ai and finding.attributes.get('blind_spot') %}
 {% set sev = severity_label(finding, report) %}
 {% set lines = review_lines(finding, report) %}
 {% set reviews = finding.attributes.get('review_of') %}
+{% set lead_kind = finding.attributes.get('blind_spot') %}
+{% set lead_subject = finding.attributes.get('subject') or finding.changed_object %}
+{% set lead_targets = finding.attributes.get('likely_targets') or [] %}
+{% set lead_checked = finding.attributes.get('checked') or [] %}
+{% set lead_unknowns = finding.attributes.get('unknowns') or [] %}
+{% set lead_citation = finding.attributes.get('citation_unconfirmed') %}
 {% set status_text = {
   'confirmed': 'Confirmed by the source comparison',
   'potential': 'Possible, not confirmed',
@@ -20,52 +28,156 @@
 <article class="panel finding-page {{ 'ai-panel' if is_ai else '' }}">
   <header class="finding-head">
     <div class="finding-tags">
-      {% if is_ai %}
+      {% if is_lead %}
+      <span class="origin origin-ai">Unverified AI lead</span>
+      <span class="pill pill-{{ sev.level }}">Related finding: {{ sev.level | capitalize }}</span>
+      {% elif is_ai %}
       <span class="origin origin-ai">AI investigator</span>
+      <span class="pill pill-{{ sev.level }}">{{ sev.text }}</span>
       {% else %}
       <span class="origin origin-deterministic">Deterministic</span>
-      {% endif %}
       <span class="pill pill-{{ sev.level }}">{{ sev.text }}</span>
+      {% endif %}
     </div>
-    <h1>{{ finding.id }}{% if reviews %} <span class="finding-sub">explains <a href="/analyses/{{ report.run_id }}/findings/{{ reviews }}">{{ reviews }}</a></span>{% endif %}</h1>
-    {% if is_ai %}
+    <h1>{{ lines.change or finding.explanation }}{% if reviews and not lines.change %} <span class="finding-sub">explains <a href="/analyses/{{ report.run_id }}/findings/{{ reviews }}">{{ reviews }}</a></span>{% endif %}</h1>
+    <p class="finding-id">{{ finding.id }}{% if reviews %} · {{ 'explains' if is_ai else 'reviews' }} <a href="/analyses/{{ report.run_id }}/findings/{{ reviews }}">{{ reviews }}</a>{% endif %}</p>
+    {% if is_lead %}
+    <p class="hint">An unverified AI answer about {% if lead_kind == 'synonym' %}a synonym{% else %}SQL built while the program runs{% endif %}. It does not block or clear deployment; the open item it explains stays open until a test or a person confirms it.</p>
+    {% elif is_ai %}
     <p class="hint">Written by the AI model to explain a finding in plain words.</p>
     {% else %}
     <p class="hint">Found by the Python checks. The AI model did not write this.</p>
     {% endif %}
   </header>
 
+  {% if is_lead %}
   <section class="finding-section">
-    {% include "_ai_lines.html" %}
+    <h2>Hypothesis</h2>
+    <p>{{ finding.explanation }}</p>
+    {% if lead_targets %}
+    <p><strong>Possibly uses:</strong> {% for target in lead_targets %}<code class="obj">{{ target }}</code>{{ ', ' if not loop.last }}{% endfor %}</p>
+    {% endif %}
   </section>
+
+  {% if lead_checked %}
+  <section class="finding-section">
+    <h2>What the AI looked up</h2>
+    <ul class="plain-list">
+      {% for item in lead_checked %}<li><code class="obj">{{ item.object }}</code> in {{ item.environment | capitalize }}: {{ item.result }}</li>{% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  {% if lead_unknowns %}
+  <section class="finding-section">
+    <h2>Not checked</h2>
+    <p>{{ lead_unknowns | join(' ') }}</p>
+  </section>
+  {% endif %}
+
+  {% if finding.proposed_tests %}
+  <section class="finding-section">
+    <h2>Suggested validation</h2>
+    <p><span class="attrib attrib-ai">AI suggestion, review before use</span> {{ finding.proposed_tests[0] }}</p>
+  </section>
+  {% endif %}
+
+  {% if lead_citation %}
+  <section class="finding-section">
+    <h2>Citation</h2>
+    <p class="hint">The AI's line references could not be matched to the captured source.</p>
+  </section>
+  {% endif %}
+
+  {% else %}
+
+  {% if not is_ai %}
+  <section class="finding-section">
+    <h2>Does it block deployment</h2>
+    {% if row and row.policy %}
+    <p>{{ ui.tag(row.blocking_label, 'danger' if row.blocking == 'blocker' else 'warning') }} {{ ui.tag(row.policy_state_label, row.policy_state_tone) }}</p>
+    <p>Rule <code>{{ row.policy.item.rule_id }}</code>: {{ row.policy.item.title }}. {{ row.policy.reason }}</p>
+    <p class="hint">How it clears: {{ view.decision.resolutions.get(row.policy.item.resolution, '') }}</p>
+    {% else %}
+    <p>No. {% if view is defined and view.decision %}No enabled rule in policy {{ view.decision.policy_version }} applies to this finding.{% else %}No enabled policy rule applies to this finding.{% endif %}</p>
+    {% endif %}
+  </section>
+
+  <section class="finding-section">
+    <h2>What changed</h2>
+    {% if row and row.change_type_label %}<p class="hint">Object change: {{ row.change_type_label }}.</p>{% endif %}
+    {% if row and row.diff_link %}<p>Changed in <code>{{ row.diff_link.label }}</code>. The exact lines are in the evidence below.</p>{% else %}<p class="hint">The captured change is in the evidence below.</p>{% endif %}
+  </section>
+  {% endif %}
 
   <section class="finding-section">
     <h2>{{ 'What the model looked at' if is_ai else 'Evidence' }}</h2>
+    {% if is_ai %}
+    {% include "_ai_lines.html" %}
     <p>{{ finding.evidence }}</p>
+    {% else %}
+    <p class="evidence-text">{{ finding.evidence }}</p>
+    {% if row %}<p class="hint">Captured from {{ row.environment_label }}.</p>{% endif %}
+    {% if finding.changed_lines_test or finding.corresponding_lines_prod or finding.affected_object or finding.dependency_path %}
+    <dl class="kv">
+      {% if finding.changed_lines_test %}
+      <div><dt>Lines in Test</dt><dd>
+        {% for line in finding.changed_lines_test %}{% if row and row.diff_link %}<a href="{{ view.base_url }}?tab=objects&amp;object={{ row.diff_link.key | urlencode }}&amp;line={{ line }}&amp;side=t" data-goto-line="{{ row.diff_link.key }}|t|{{ line }}">{{ line }}</a>{% else %}{{ line }}{% endif %}{{ ', ' if not loop.last }}{% endfor %}
+      </dd></div>
+      {% endif %}
+      {% if finding.corresponding_lines_prod %}
+      <div><dt>Lines in Production</dt><dd>
+        {% for line in finding.corresponding_lines_prod %}{% if row and row.diff_link %}<a href="{{ view.base_url }}?tab=objects&amp;object={{ row.diff_link.key | urlencode }}&amp;line={{ line }}&amp;side=p" data-goto-line="{{ row.diff_link.key }}|p|{{ line }}">{{ line }}</a>{% else %}{{ line }}{% endif %}{{ ', ' if not loop.last }}{% endfor %}
+      </dd></div>
+      {% endif %}
+      {% if finding.affected_object %}<div><dt>Affected object</dt><dd><code>{{ finding.affected_object }}</code></dd></div>{% endif %}
+      {% if finding.dependency_path %}<div class="kv-wide"><dt>Call path</dt><dd>{% for step in finding.dependency_path %}<code>{{ step }}</code>{{ ' · ' if not loop.last }}{% endfor %}</dd></div>{% endif %}
+    </dl>
+    {% endif %}
+    {% if row and row.diff_link %}
+    <ul class="link-list">
+      <li><a href="{{ ui.diff_href(view, row.diff_link) }}" data-goto-line="{{ row.diff_link.key }}|{{ row.diff_link.side }}|{{ row.diff_link.line or '' }}">Open source diff: {{ row.diff_link.label }}</a></li>
+    </ul>
+    {% endif %}
+    {% endif %}
   </section>
 
-  {% set scripts = [] if is_ai else (finding.attributes.get('action_scripts') or []) %}
-  {% if not is_ai and (finding.recommended_action != lines.todo or finding.proposed_tests | length > 1 or scripts) %}
+  {% if not is_ai %}
   <section class="finding-section">
-    {% if finding.recommended_action != lines.todo or scripts %}
-    <h2>Recommended action</h2>
-    {% if finding.recommended_action != lines.todo %}<p>{{ finding.recommended_action }}</p>{% endif %}
-    {% if scripts %}{% include "_action_scripts.html" %}{% endif %}
+    <h2>What to test</h2>
+    {% if finding.recommended_action %}
+    <p><span class="attrib">Analyzer rule</span> {{ finding.recommended_action }}</p>
     {% endif %}
-    {% if finding.proposed_tests | length > 1 %}
-    <h2>Tests to run</h2>
-    <ul>{% for test in finding.proposed_tests %}<li>{{ test }}</li>{% endfor %}</ul>
+    {% set scripts = finding.attributes.get('action_scripts') or [] %}
+    {% if scripts %}
+    <details class="disclosure action-scripts">
+      <summary>Script{{ 's' if scripts | length != 1 }} for this action ({{ scripts | length }})</summary>
+      {% include "_action_scripts.html" %}
+    </details>
     {% endif %}
+    {% if finding.proposed_tests %}
+    <ul class="step-list-plain">
+      {% for test in finding.proposed_tests %}<li><span class="attrib">Analyzer rule</span> {{ test }}</li>{% endfor %}
+    </ul>
+    {% endif %}
+    {% if not finding.recommended_action and not finding.proposed_tests and not scripts %}<p class="hint">No investigation steps were recorded.</p>{% endif %}
   </section>
+  {% else %}
+  <section class="finding-section">
+    <h2>AI interpretation, not evidence</h2>
+    {% if lines.unchecked %}<p class="hint">Not checked: {{ lines.unchecked }}</p>{% endif %}
+    {% if row and row.ai_flags %}{% for flag in row.ai_flags %}<p class="notice notice-warning">{{ flag }}</p>{% endfor %}{% endif %}
+  </section>
+  {% endif %}
   {% endif %}
 
   <section class="finding-section">
     <h2>Details</h2>
     <dl class="meta">
-      <div><dt>Object</dt><dd>{{ finding.changed_object }} ({{ finding.object_type | lower }})</dd></div>
-      <div><dt>Type of change</dt><dd>{{ finding.change_category | replace('_', ' ') | capitalize | replace('sql', 'SQL') }}</dd></div>
+      {% if finding.changed_object %}<div><dt>Object</dt><dd>{{ finding.changed_object }} ({{ finding.object_type | lower }})</dd></div>{% endif %}
+      {% if not is_ai %}<div><dt>Type of change</dt><dd>{{ finding.change_category | replace('_', ' ') | capitalize | replace('sql', 'SQL') }}</dd></div>{% endif %}
       <div><dt>Status</dt><dd>{{ status_text.get(finding.status.value, finding.status.value) }}</dd></div>
-      <div><dt>Confidence</dt><dd>{{ finding.confidence.value | capitalize }}</dd></div>
+      <div><dt>Confidence</dt><dd>{{ finding.confidence.value | capitalize }} <span class="hint">(qualitative)</span></dd></div>
       {% if finding.rule_id %}<div><dt>Rule</dt><dd><code>{{ finding.rule_id }}</code></dd></div>{% endif %}
       {% if finding.fingerprint %}<div><dt>Fingerprint</dt><dd><code>{{ finding.fingerprint }}</code></dd></div>{% endif %}
       <div><dt>Run</dt><dd><code>{{ report.run_id }}</code></dd></div>

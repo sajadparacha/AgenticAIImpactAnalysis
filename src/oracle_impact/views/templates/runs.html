@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% from "_ui.html" import crumbs %}
+{% from "_icons.html" import icon, status %}
+{% set pquery = (qs ~ "&") if qs else "" %}
+{% block title %}Runs{% endblock %}
+{% block content %}
+{{ crumbs([{"label": "New analysis", "href": "/"}, {"label": "Runs"}]) }}
+<section class="page-intro">
+  <div>
+    <h1>Runs</h1>
+    <p class="lede">Every analysis captured here, newest first. A run that completed is separate from a recommendation that is ready to deploy.</p>
+  </div>
+</section>
+
+<form method="get" action="/runs" class="runs-toolbar" role="search">
+  <div class="field field-grow">
+    <span>Search packages or ID</span>
+    <input type="search" name="q" value="{{ q }}" placeholder="DEMO.PKG_STATUS or a run id" aria-label="Search packages or run ID">
+  </div>
+  <div class="field">
+    <span>Status</span>
+    <select name="status" aria-label="Filter by execution status">
+      {% for value, label in statuses %}<option value="{{ value }}"{% if value == status %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="field">
+    <span>Mode</span>
+    <select name="mode" aria-label="Filter by run mode">
+      {% for value, label in modes %}<option value="{{ value }}"{% if value == mode %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="field">
+    <span>Outcome</span>
+    <select name="readiness" aria-label="Filter by captured recommendation">
+      {% for value, label in readiness_options %}<option value="{{ value }}"{% if value == readiness %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="field">
+    <span>Captured</span>
+    <select name="age" aria-label="Filter by capture time">
+      {% for value, label in ages %}<option value="{{ value }}"{% if value == age %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="runs-toolbar-actions">
+    <button type="submit" class="btn-ghost">{{ icon("search") }} Apply</button>
+    {% if q or status or mode or readiness or age %}<a class="btn-sm" href="/runs">Reset</a>{% endif %}
+  </div>
+</form>
+
+<p class="result-count" aria-live="polite">
+  {% if total == 1 %}1 run{% else %}{{ total }} runs{% endif %}{% if q or status or mode or readiness or age %} match the filters{% endif %}.
+  {% if total > per_page %}Showing {{ (page - 1) * per_page + 1 }}–{{ (page - 1) * per_page + shown }}.{% endif %}
+</p>
+
+{% if rows %}
+<div class="table-scroll">
+  <table class="runs-table">
+    <thead>
+      <tr>
+        <th scope="col">Packages</th>
+        <th scope="col">Captured</th>
+        <th scope="col">Status</th>
+        <th scope="col">Recommendation</th>
+        <th scope="col">Mode</th>
+        <th scope="col">Model</th>
+        <th scope="col"><span class="sr-only">Open</span></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for run in rows %}
+      <tr>
+        <td class="runs-pkg">
+          <span class="row-title">{{ run.packages | join(" · ") }}</span>
+          <span class="row-meta">
+            Run <code>{{ run.short_id }}</code>
+            <button type="button" class="copy-btn" data-copy="{{ run.run_id }}" aria-label="Copy run ID" title="Copy full run ID">{{ icon("copy") }}</button>
+          </span>
+        </td>
+        <td>
+          <span class="row-title">{{ run.when }}</span>
+          <span class="row-meta" title="Captured {{ run.utc }}">{{ run.local }}</span>
+        </td>
+        <td>
+          <span class="tag tone-{{ run.status_tone }}">{{ run.status_label }}</span>
+        </td>
+        <td>
+          {% if run.recommendation %}
+          <span class="row-title">{{ run.recommendation }}</span>
+          {% if run.freshness.stale %}<span class="row-meta warn-text">{{ status('clock-alert', 'warning') }}Current validity: expired</span>{% endif %}
+          {% else %}
+          <span class="row-meta">—</span>
+          {% endif %}
+        </td>
+        <td>{{ run.mode_label }}</td>
+        <td>{{ run.model or "—" }}</td>
+        <td><a class="btn-sm" href="/analyses/{{ run.run_id }}">Open {{ icon("chevron-right") }}</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if pages > 1 %}
+<nav class="pager" aria-label="Runs pages">
+  {% if page > 1 %}<a class="btn-sm" href="/runs?{{ pquery }}page={{ page - 1 }}">{{ icon("chevron-left") }} Newer</a>{% endif %}
+  <span class="finding-count">Page {{ page }} of {{ pages }}</span>
+  {% if page < pages %}<a class="btn-sm" href="/runs?{{ pquery }}page={{ page + 1 }}">Older {{ icon("chevron-right") }}</a>{% endif %}
+</nav>
+{% endif %}
+{% else %}
+<p class="empty">{{ icon("history") }} {% if q or status or mode or readiness or age %}No runs match those filters. <a href="/runs">Clear filters</a>.{% else %}No analyses yet. Start one from <a href="/">New analysis</a>.{% endif %}</p>
+{% endif %}
+{% endblock %}

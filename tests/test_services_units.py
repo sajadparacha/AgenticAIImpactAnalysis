@@ -27,7 +27,7 @@ from oracle_impact.security import (
 )
 from oracle_impact.services import readiness
 from oracle_impact.services.decision_service import ActionError, DecisionService, actor, offline_context
-from oracle_impact.services.history import age_text, previous_run, related_runs, stale_reason, superseded_by
+from oracle_impact.services.history import age_text, freshness, previous_run, related_runs, stale_reason, superseded_by
 from oracle_impact.services.report_view import initial_state
 from oracle_impact.services.snapshot_service import SnapshotService
 from tests.support import run_catalogs, settings
@@ -155,6 +155,19 @@ def test_stale_reason_and_age_text(tmp_path):
     assert age_text(report, created + timedelta(hours=5)) == "5 hours"
     assert age_text(report, created - timedelta(minutes=5)) == "0 minutes"
     assert age_text(report.model_copy(update={"created_at": ""})) == "unknown"
+
+
+def test_freshness_flags_stale_runs_by_capture_time_only():
+    from datetime import timezone
+
+    now = datetime(2026, 11, 25, 12, 0, 0, tzinfo=timezone.utc)
+    stale = freshness("2026-11-22T12:00:00+00:00", 24, now)
+    assert stale["stale"] is True and stale["age"] == "3 days"
+    assert "24 hour" in stale["reason"]
+    fresh = freshness("2026-11-25T10:00:00+00:00", 24, now)
+    assert fresh["stale"] is False and fresh["reason"] is None
+    assert freshness("2026-11-22T12:00:00+00:00", 0, now)["stale"] is False
+    assert freshness(None, 24, now) == {"age": "unknown", "stale": False, "reason": None}
 
 
 # ----------------------------------------------------------------- policy

@@ -1,5 +1,5 @@
 {% import "_report_macros.html" as ui %}
-{% from "_icons.html" import icon %}
+{% from "_icons.html" import icon, status %}
 {% set audit = view.audit %}
 {% set c = view.coverage %}
 {% set ai = view.ai %}
@@ -79,7 +79,7 @@
           </tbody>
         </table>
       </div>
-      <p class="hint">These stay listed for the life of this report. A fix-and-reanalyze item clears only when a new analysis no longer raises it.</p>
+      <p class="hint">These are the policy items that decide the verdict, listed with how each one clears. A blocker (fix-and-reanalyze) also appears as a numbered step in the step-by-step fix plan; a validation that proposes test steps also appears under Recommended tests. They are the same items from different views, not extra work.</p>
       {% else %}
       <p class="empty">No rule in policy {{ d.policy_version }} applies to these findings.</p>
       {% endif %}
@@ -105,7 +105,7 @@
         {% for group in view.tests[:6] %}{{ test_group(group) }}{% endfor %}
       </ul>
       {% if view.tests | length > 6 %}
-      <details class="disclosure"{% if print_mode %} open{% endif %}>
+      <details class="disclosure more-disclosure"{% if print_mode %} open{% endif %}>
         <summary>Tests for {{ view.tests | length - 6 }} more finding{{ 's' if view.tests | length - 6 != 1 }}</summary>
         <ul class="test-groups">
           {% for group in view.tests[6:] %}{{ test_group(group) }}{% endfor %}
@@ -119,11 +119,12 @@
   </details>
 
   <details class="card disclosure detail-section" id="coverage"{% if print_mode %} open{% endif %}>
-    <summary><span class="section-title">Coverage and blind spots</span><span class="section-summary">{% if c.recorded %}{{ c.analyzed }} of {{ c.in_scope }} objects fully analyzed{% else %}Not recorded{% endif %}</span></summary>
+    <summary><span class="section-title">Coverage and blind spots</span><span class="section-summary">{% if c.recorded %}{{ c.analyzed }} of {{ c.in_scope }} objects checked{% else %}Not recorded{% endif %}</span></summary>
     <div class="section-body">
       {{ ui.kind('det') }}
       {% if c.recorded %}
-      <p><strong>{{ c.analyzed }} of {{ c.in_scope }}</strong> in-scope objects fully analyzed{% if c.percent is not none %} ({{ c.percent }}%){% endif %}. Denominator: {{ c.denominator }}. Completed {{ c.completed_at[:19] | replace('T', ' ') }} UTC in {{ c.environments | map('upper') | join(', ') }}.</p>
+      <p><strong>{{ c.analyzed }} of {{ c.in_scope }}</strong> in-scope objects analyzed by the deterministic checks{% if c.percent is not none %} ({{ c.percent }}%){% endif %}. Denominator: {{ c.denominator }}. Completed {{ c.completed_at[:19] | replace('T', ' ') }} UTC in {{ c.environments | map('upper') | join(', ') }}.</p>
+      <p class="hint">"Analyzed" means every deterministic check ran against the object; it does not mean the object is safe. Dynamic SQL, unresolved synonyms, and other runtime blind spots are listed below and are never counted as analyzed.</p>
       <div class="table-scroll">
         <table class="data-table compact">
           <thead><tr><th scope="col">Object</th><th scope="col">State</th><th scope="col">Why</th></tr></thead>
@@ -151,12 +152,15 @@
   </details>
 
   <details class="card disclosure detail-section" id="ai"{% if print_mode or ai.used %} open{% endif %}>
-    <summary><span class="section-title">AI review</span><span class="section-summary">{% if ai.used %}Used ({{ ai.model }}){% else %}Did not run{% endif %}</span></summary>
+    <summary><span class="section-title">AI review</span><span class="section-summary">{% if ai.used %}Used ({{ ai.model }}) · {{ ai.summary }}{% else %}Did not run{% endif %}</span></summary>
     <div class="section-body">
       {{ ui.kind('ai') }}
       {% if not ai.used %}
       <p>The AI investigator did not run. Every finding in this report comes from the deterministic checks.</p>
       {% else %}
+      {% if ai.serious and not ai.serious_explained %}
+      <p class="notice notice-warning">The investigator did not explain any of the {{ ai.serious }} serious findings. Treat every finding on its deterministic evidence, not as reviewed.</p>
+      {% endif %}
       <div class="mini-stats">
         <div><strong>{{ ai.serious_explained }} of {{ ai.serious }}</strong><span>serious findings explained</span></div>
         <div><strong>{{ ai.blind_spots | length }}</strong><span>things it could not check</span></div>
@@ -308,7 +312,7 @@
       {% if h.runs %}
       <ul class="record-list">
         {% for run in h.runs[:10] %}
-        <li>{% if run.run_id == view.run_id %}<strong>This run</strong>{% else %}<a href="/analyses/{{ run.run_id }}/report">{{ run.run_id[:8] }}</a>{% endif %} · {{ run.created_at[:19] | replace('T', ' ') }} UTC · {{ run.recommendation }}</li>
+        <li>{% if run.run_id == view.run_id %}<strong>This run</strong>{% else %}<a href="/analyses/{{ run.run_id }}/report">{{ run.run_id[:8] }}</a>{% endif %} · {{ run.created_at[:19] | replace('T', ' ') }} UTC · {{ run.freshness.age }} old · Captured: {{ run.recommendation }}{% if run.freshness.stale %} · <span class="hint">{{ status('clock-alert', 'warning') }}Current validity: expired</span>{% endif %}</li>
         {% endfor %}
       </ul>
       {% endif %}

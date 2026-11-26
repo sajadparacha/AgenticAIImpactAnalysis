@@ -1,17 +1,21 @@
 {% from "_icons.html" import icon %}
 <section class="panel">
-  <h2>Recent runs</h2>
+  <div class="card-head">
+    <h2>Recent runs</h2>
+    <a class="btn-sm" href="/runs">View all runs</a>
+  </div>
   {% if runs %}
   <div class="table-scroll">
   <table data-runs-table>
     <thead>
-      <tr><th>Run</th><th>Packages</th><th>Mode</th><th>Model</th><th>Status</th><th>Recommendation</th></tr>
+      <tr><th>Run</th><th>Packages</th><th>When</th><th>Mode</th><th>Model</th><th>Status</th><th>Recommendation</th></tr>
     </thead>
     <tbody>
       {% for run in runs %}
       <tr{% if loop.index > 10 %} class="is-extra"{% endif %}>
         <td><a href="/analyses/{{ run.run_id }}" title="{{ run.run_id }}">{{ run.short_id }}</a></td>
         <td>{{ run.packages | join(", ") }}</td>
+        <td title="{{ run.when_title }}">{{ run.when }}{% if run.freshness.stale %} <span class="hint">(expired)</span>{% endif %}</td>
         <td>{{ "AI investigated" if run.mode == "agentic" else "Checks only" }}</td>
         <td>{{ run.model or "—" }}</td>
         <td>{{ run.status }}</td>

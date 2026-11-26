@@ -1,36 +1,67 @@
 {% from "_icons.html" import icon %}
+{% from "_brand.html" import wordmark %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Oracle package impact analysis{% endblock %}</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/static/favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="/static/favicon-180.png">
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body class="{% block body_class %}{% endblock %}">
   <a class="skip-link" href="#content">Skip to content</a>
-  <header class="mast">
-    <div class="mast-inner">
-      <a class="wordmark" href="/">Oracle package impact analysis</a>
-      <button type="button" class="menu-toggle" data-nav-toggle aria-expanded="false" aria-controls="site-nav" aria-label="Menu">
-        {{ icon("menu", cls="icon-menu") }}
-        {{ icon("x", cls="icon-close") }}
-      </button>
-      <nav id="site-nav" class="mast-nav" data-site-nav aria-label="Sections">
+  <div class="nav-backdrop" data-nav-backdrop hidden></div>
+  <div class="shell">
+    <aside class="sidebar" id="site-nav" data-site-nav aria-label="Application">
+      <div class="sidebar-brand">
+        {{ wordmark() }}
+      </div>
+      <nav class="sidebar-nav" aria-label="Primary">
         {% set path = request.url.path if request is defined else '' %}
         {% set nav = namespace(current='') %}
         {% if path == '/' or path.startswith('/analyses/') %}{% set nav.current = 'analysis' %}
+        {% elif path == '/runs' %}{% set nav.current = 'runs' %}
         {% endif %}
-        <a href="/"{% if nav.current == 'analysis' %} aria-current="page"{% endif %}>{{ icon("plus") }} New analysis</a>
-        <form class="nav-form" method="post" action="/logout">
-          <button type="submit" class="linkish">{{ icon("log-out") }} Sign out</button>
-        </form>
+        <a href="/"{% if nav.current == 'analysis' %} aria-current="page"{% endif %}>{{ icon("plus") }}<span>New analysis</span></a>
+        <a href="/runs"{% if nav.current == 'runs' %} aria-current="page"{% endif %}>{{ icon("history") }}<span>Runs</span></a>
       </nav>
+      {% if runs is defined and runs %}
+      <div class="sidebar-section">
+        <h2 class="sidebar-title">Recent runs</h2>
+        <ul class="sidebar-runs">
+          {% for run in runs[:6] %}
+          <li>
+            <a href="/analyses/{{ run.run_id }}" title="{{ run.run_id }}">
+              <span class="sidebar-run-pkg">{{ run.packages | join(", ") }}</span>
+              <span class="sidebar-run-meta">{{ run.short_id }} · {{ run.when }}</span>
+            </a>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+      <div class="sidebar-footer">
+        <form method="post" action="/logout">
+          <button type="submit" class="topbar-signout">{{ icon("log-out") }}<span>Sign out</span></button>
+        </form>
+      </div>
+    </aside>
+    <div class="shell-body">
+      <header class="topbar">
+        <button type="button" class="menu-toggle" data-nav-toggle aria-expanded="false" aria-controls="site-nav" aria-label="Menu">
+          {{ icon("menu", cls="icon-menu") }}
+          {{ icon("x", cls="icon-close") }}
+        </button>
+        <div class="topbar-context">{%- block topbar %}{% endblock -%}</div>
+      </header>
+      <main id="content" class="content">
+        {% block content %}{% endblock %}
+      </main>
     </div>
-  </header>
-  <main id="content">
-    {% block content %}{% endblock %}
-  </main>
+  </div>
   <script src="/static/app.js"></script>
 </body>
 </html>

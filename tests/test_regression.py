@@ -1430,3 +1430,63 @@ def test_missing_dependency_does_not_claim_a_test_failure(tmp_path):
 
 def _dispatch_body(report):
     return next(diff for diff in report.diffs if diff.owner == "DEMO" and diff.name == "PKG_DISPATCH" and diff.object_type == "PACKAGE BODY")
+
+
+# ----------------------------------------------------------------- phase 1 correctness locks
+
+
+def test_missing_object_confirm_script_never_claims_to_create(tmp_path):
+    """A22: the second missing-object step only verifies; its title and SQL must not say 'Create'."""
+    from tests.support import run_demo
+
+    report = run_demo(tmp_path, ["DEMO.PKG_DISPATCH"])
+    [finding] = [item for item in report.findings if item.affected_object == "DEMO.NEXT_BATCH"]
+    extract, confirm = finding.attributes["action_scripts"]
+    assert extract["environment"] == "test" and confirm["environment"] == "production"
+    assert "Create" not in confirm["title"]
+    assert confirm["title"].startswith("Confirm DEMO.NEXT_BATCH")
+    code = [line.strip() for line in confirm["sql"].splitlines() if line.strip() and not line.strip().startswith("--")]
+    assert code and not any(line.upper().startswith(("CREATE", "DROP", "ALTER")) for line in code)
+
+
+def test_fallback_dependency_impact_is_scoped_to_checked_scope():
+    """A17: the fallback impact wording must not claim global absence."""
+    from oracle_impact.services.analysis_service import _impact_for
+
+    assert _impact_for([], "DEMO.OTHER") == "No breaking change in checked scope"
+    assert "incompatible" not in _impact_for([], "DEMO.OTHER")
+
+
+def test_dependency_diagram_uses_neutral_nodes_and_distinguishes_spec_and_body():
+    """A18/A16: referenced objects are not green, and spec vs body are told apart."""
+    from oracle_impact.infrastructure.reports.diagram import dependency_diagram
+    from oracle_impact.models.report import DependencyRow
+
+    rows = [
+        DependencyRow(direction="uses", object_type="TABLE", object_name="ACCOUNT", owner="APP", usage="", impact="", depth=1, database=""),
+        DependencyRow(direction="uses", object_type="PACKAGE", object_name="PKG_DEMO", owner="APP", usage="", impact="", depth=1, database=""),
+    ]
+    svg = dependency_diagram(["APP.PKG_DEMO"], rows)
+    assert "#0f6e56" not in svg
+    assert "APP.ACCOUNT (table)" in svg and "APP.PKG_DEMO (spec)" in svg
+
+
+def test_production_fix_plan_steps_state_the_change_approval_prerequisite(tmp_path):
+    """A23: Production DDL steps name the change-approval gate before running them."""
+    from oracle_impact.analysis.action_scripts import apply_action_scripts
+    from oracle_impact.services.fix_plan import build_fix_plan
+    from oracle_impact.services.readiness import evaluate_readiness, policy_for
+    from tests.support import run_demo
+
+    report = run_demo(tmp_path, ["DEMO.PKG_DISPATCH"])
+    apply_action_scripts(report.findings, report.dependency_edges)
+    policy, _computed = policy_for(report)
+    readiness = evaluate_readiness(report, policy, [], [], None)
+    plan = build_fix_plan(report, readiness, report_url=f"/analyses/{report.run_id}/report")
+    sections = {section["key"]: section for section in plan["sections"]}
+    production_prep = [step for step in sections["before_release"]["steps"] if step["environment"] == "production"]
+    assert production_prep
+    assert all(
+        step["prerequisite"] == "Get change approval through your normal change process before running this in Production."
+        for step in production_prep
+    )

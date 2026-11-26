@@ -1,5 +1,11 @@
 {% import "_report_macros.html" as ui %}
 {% from "_icons.html" import icon %}
+{% macro next_step(step) -%}
+<li>
+  {{ ui.evidence(step.badge_key, step.badge) }} {{ step.text }}
+  {% if not print_mode %}{% if step.href %}<a href="{{ step.href }}" class="hint">{{ step.href_label or "Go" }}</a>{% elif step.finding_id %}<a href="{{ ui.finding_href(view, step.finding_id) }}" data-open-finding="{{ step.finding_id }}" class="hint">Open finding {{ step.finding_id }}</a>{% elif step.tab %}<a href="{{ view.base_url }}?tab={{ step.tab }}" data-goto-tab="{{ step.tab }}" class="hint">{{ 'See details' if step.tab == 'details' else 'See the summary' }}</a>{% endif %}{% endif %}
+</li>
+{%- endmacro %}
 <section class="rv-panel" id="overview" {{ ui.panel_attrs(state, 'overview', print_mode) }}>
   <h2 class="{{ '' if print_mode else 'sr-only' }}">Summary</h2>
   <div class="overview-grid">
@@ -40,24 +46,21 @@
 
       <section class="card" aria-labelledby="next-actions">
         <div class="card-head"><h3 id="next-actions">What to do next</h3></div>
+        {% if d.hold_rows %}
+        <p class="hint overview-counts">"Holding deployment" is a policy count — blockers plus required validations. "What to do next" is a work view of the same items: each fix-and-reanalyze item becomes a fix step, each validation becomes a test step. They are different dimensions of the same findings, so the numbers can differ without anything being dropped.</p>
+        {% endif %}
         {% if view.next_steps %}
         <ol class="action-list">
           {% for step in view.next_steps[:5] %}
-          <li>
-            {{ ui.evidence(step.badge_key, step.badge) }} {{ step.text }}
-            {% if not print_mode %}{% if step.finding_id %}<a href="{{ ui.finding_href(view, step.finding_id) }}" data-open-finding="{{ step.finding_id }}" class="hint">Open</a>{% elif step.tab %}<a href="{{ view.base_url }}?tab={{ step.tab }}" data-goto-tab="{{ step.tab }}" class="hint">Go</a>{% endif %}{% endif %}
-          </li>
+          {{ next_step(step) }}
           {% endfor %}
         </ol>
         {% if view.next_steps | length > 5 %}
-        <details class="disclosure"{% if print_mode %} open{% endif %}>
+        <details class="disclosure more-disclosure"{% if print_mode %} open{% endif %}>
           <summary>{{ view.next_steps | length - 5 }} more</summary>
           <ol class="action-list" start="6">
             {% for step in view.next_steps[5:] %}
-            <li>
-              {{ ui.evidence(step.badge_key, step.badge) }} {{ step.text }}
-              {% if not print_mode %}{% if step.finding_id %}<a href="{{ ui.finding_href(view, step.finding_id) }}" data-open-finding="{{ step.finding_id }}" class="hint">Open</a>{% elif step.tab %}<a href="{{ view.base_url }}?tab={{ step.tab }}" data-goto-tab="{{ step.tab }}" class="hint">Go</a>{% endif %}{% endif %}
-            </li>
+            {{ next_step(step) }}
             {% endfor %}
           </ol>
         </details>

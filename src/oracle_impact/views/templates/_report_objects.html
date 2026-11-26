@@ -1,8 +1,8 @@
 {% import "_report_macros.html" as ui %}
 {% set cls = view.classification %}
 {% set diffs = view.diffs %}
-{% set left_label = view.header.proposed.label %}
-{% set right_label = view.header.baseline.label %}
+{% set left_label = view.header.baseline.label %}
+{% set right_label = view.header.proposed.label %}
 {% set objects_by_key = {} %}
 {% for item in view.objects %}{% set _ = objects_by_key.update({item.key: item}) %}{% endfor %}
 <section class="rv-panel" id="objects" {{ ui.panel_attrs(state, 'objects', print_mode) }}>
@@ -65,8 +65,8 @@
           {% endif %}
         </header>
         <dl class="kv hashes">
-          <div><dt>{{ left_label }} SHA-256</dt><dd><code class="hash">{{ diff.test_hash or 'Not captured' }}</code></dd></div>
-          <div><dt>{{ right_label }} SHA-256</dt><dd><code class="hash">{{ diff.prod_hash or 'Not captured' }}</code></dd></div>
+          <div><dt>{{ left_label }} SHA-256</dt><dd><code class="hash">{{ diff.prod_hash or 'Not captured' }}</code></dd></div>
+          <div><dt>{{ right_label }} SHA-256</dt><dd><code class="hash">{{ diff.test_hash or 'Not captured' }}</code></dd></div>
         </dl>
         {% if meta %}
         <details class="disclosure obj-meta-panel"{% if print_mode %} open{% endif %}>
@@ -100,8 +100,8 @@
             <colgroup><col class="col-ln"><col><col class="col-ln"><col></colgroup>
             <thead>
               <tr>
-                <th scope="colgroup" colspan="2">{{ left_label }} <small>proposed · {{ view.header.proposed.database_id }}</small></th>
-                <th scope="colgroup" colspan="2">{{ right_label }} <small>baseline · {{ view.header.baseline.database_id }}</small></th>
+                <th scope="colgroup" colspan="2">{{ left_label }} <small>baseline · {{ view.header.baseline.database_id }}</small></th>
+                <th scope="colgroup" colspan="2">{{ right_label }} <small>proposed · {{ view.header.proposed.database_id }}</small></th>
               </tr>
             </thead>
             <tbody>
@@ -110,10 +110,10 @@
               <tr class="diff-gap"><td colspan="4">{{ item.gap }} unchanged line{{ 's' if item.gap != 1 }} hidden</td></tr>
               {% else %}
               <tr{% if item.id %} id="{{ item.id }}"{% endif %}{% if item.prod_no %} data-p="{{ item.prod_no }}"{% endif %}{% if item.test_no %} data-t="{{ item.test_no }}"{% endif %} class="{{ 'is-change' if item.change }}{{ ' hunk' if item.hunk_start }}{{ ' far' if item.far }}">
-                <td class="ln">{{ item.test_no or '' }}</td>
-                <td class="code k-{{ item.test_kind }}"><code>{{ item.test_text }}</code></td>
                 <td class="ln">{{ item.prod_no or '' }}</td>
                 <td class="code k-{{ item.prod_kind }}"><code>{{ item.prod_text }}</code></td>
+                <td class="ln">{{ item.test_no or '' }}</td>
+                <td class="code k-{{ item.test_kind }}"><code>{{ item.test_text }}</code></td>
               </tr>
               {% endif %}
               {% endfor %}
